@@ -82,7 +82,7 @@ def test_session_cookie_sign_verify_tamper_and_expiry() -> None:
     assert verify_session_cookie(cookie, "different-secret") is None
 
     payload_b64, sig_b64 = cookie.split(".")
-    tampered_sig = sig_b64[:-1] + ("A" if sig_b64[-1] != "A" else "B")
+    tampered_sig = ("A" if sig_b64[0] != "A" else "B") + sig_b64[1:]
     assert verify_session_cookie(f"{payload_b64}.{tampered_sig}", secret) is None
     assert verify_session_cookie("malformed", secret) is None
     assert verify_session_cookie("", secret) is None
