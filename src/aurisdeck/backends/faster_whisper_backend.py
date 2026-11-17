@@ -6,6 +6,7 @@ import gc
 import logging
 import os
 import time
+import wave
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,21 @@ def _is_oom_error(exc: BaseException) -> bool:
 def _to_ms(seconds: float) -> int:
     """Convert a timestamp in seconds to rounded integer milliseconds."""
     return round(float(seconds) * 1000)
+
+
+def _load_audio_input(audio_path: Path) -> Any:
+    """Decode 16 kHz mono 16-bit PCM WAVs directly to float32 numpy array, bypassing PyAV."""
+    if audio_path.is_file() and audio_path.suffix.lower() == ".wav":
+        try:
+            with wave.open(str(audio_path), "rb") as wf:
+                if wf.getnchannels() == 1 and wf.getframerate() == 16000 and wf.getsampwidth() == 2:
+                    frames = wf.readframes(wf.getnframes())
+                    import numpy as np
+
+                    return np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        except (wave.Error, OSError, ImportError):
+            pass
+    return str(audio_path)
 
 
 class FasterWhisperBackend:
@@ -119,7 +135,8 @@ class FasterWhisperBackend:
             if cancel_check is not None and cancel_check():
                 raise JobCancelledError()
 
-            segments_gen, info = self._model.transcribe(str(audio_path), **kwargs)
+            audio_input = _load_audio_input(audio_path)
+            segments_gen, info = self._model.transcribe(audio_input, **kwargs)
             total_ms = _to_ms(float(getattr(info, "duration", 0.0) or 0.0))
             t0 = time.monotonic()
 
