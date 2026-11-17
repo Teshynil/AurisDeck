@@ -1,0 +1,29 @@
+services:
+  aurisdeck:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}
+    image: aurisdeck:latest
+    container_name: aurisdeck
+    restart: unless-stopped
+    ports:
+      - "${AURISDECK_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      HF_HOME: /data/models
+      AURISDECK_DATA_DIR: /data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

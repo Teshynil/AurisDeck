@@ -1,0 +1,39 @@
+# Version control & editor artifacts
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/
+
+# Python virtualenvs & caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local runtime data, models & databases
+data/
+models/
+outputs/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Tests (not needed in production image)
+tests/
