@@ -7,14 +7,14 @@ import { i18n } from "./i18n.js";
 import { connectSSE, disconnectSSE } from "./sse.js";
 import { store } from "./store.js";
 
-const VALID_TABS = new Set(["simple", "library", "viewer", "advanced", "settings"]);
+const VALID_TABS = new Set(["transcribe", "library", "viewer", "profiles", "settings"]);
 const THEME_STORAGE_KEY = "aurisdeck:theme";
 
 const VIEW_LOADERS = {
-  simple: () => import("./views/simple.js").catch(() => null),
+  transcribe: () => import("./views/simple.js").catch(() => null),
   library: () => import("./views/library.js").catch(() => null),
   viewer: () => import("./views/viewer.js").catch(() => null),
-  advanced: () => import("./views/advanced.js").catch(() => null),
+  profiles: () => import("./views/advanced.js").catch(() => null),
   settings: () => import("./views/settings.js").catch(() => null),
 };
 
@@ -234,7 +234,7 @@ async function loadViewModule(tab) {
 }
 
 async function renderTab(tab) {
-  const resolvedTab = VALID_TABS.has(tab) ? tab : "simple";
+  const resolvedTab = VALID_TABS.has(tab) ? tab : "transcribe";
 
   for (const btn of document.querySelectorAll("#main-nav .nav-tab")) {
     const btnTab = btn.getAttribute("data-tab");
@@ -336,8 +336,9 @@ async function loadAuthenticatedSession({ useHashOrPref = false } = {}) {
     updateDevicesBadge(devices);
 
     const hashTab = getTabFromHash();
-    const prefTab = preferences.ui_mode === "advanced" ? "advanced" : "simple";
-    const nextTab = useHashOrPref ? hashTab || prefTab : store.getState().activeTab || prefTab;
+    const nextTab = useHashOrPref
+      ? hashTab || "transcribe"
+      : store.getState().activeTab || "transcribe";
 
     store.setState({ activeTab: nextTab });
     await renderTab(nextTab);
@@ -366,7 +367,7 @@ function bindShellEvents() {
   const brandLink = document.getElementById("brand-link");
   brandLink?.addEventListener("click", (event) => {
     event.preventDefault();
-    store.setState({ activeTab: "simple" });
+    store.setState({ activeTab: "transcribe" });
   });
 
   window.addEventListener("hashchange", () => {

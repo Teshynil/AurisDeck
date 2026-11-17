@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import math
+import os
 import subprocess
+import uuid
+from collections.abc import Sequence
 from pathlib import Path
 
 
@@ -126,3 +129,65 @@ def extract_wav_16k(
     if result.returncode != 0:
         detail = result.stderr.strip() or f"ffmpeg exited with code {result.returncode}"
         raise MediaInvalidError(detail=detail)
+
+
+def mix_multitrack_audio(
+    tracks: Sequence[tuple[Path | str, int]],
+    dst_audio: Path | str,
+    normalize_audio: bool = False,
+) -> None:
+    """Mix multiple audio tracks (with per-track offset_ms) into a single .m4a file."""
+    if not tracks:
+        raise MediaInvalidError(detail="At least one track is required to mix audio")
+
+    dst_path = Path(dst_audio)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dst_path.with_name(f".{dst_path.stem}.tmp.{uuid.uuid4().hex[:8]}{dst_path.suffix}")
+
+    cmd: list[str] = ["ffmpeg", "-y"]
+    filter_parts: list[str] = []
+    mix_inputs: list[str] = []
+
+    for idx, (src, offset_ms) in enumerate(tracks):
+        cmd.extend(["-i", str(Path(src))])
+        delay = max(0, int(offset_ms or 0))
+        if delay > 0:
+            filter_parts.append(f"[{idx}:a]adelay={delay}:all=1[a{idx}]")
+            mix_inputs.append(f"[a{idx}]")
+        else:
+            mix_inputs.append(f"[{idx}:a]")
+
+    amix_chain = (
+        f"{''.join(mix_inputs)}amix=inputs={len(tracks)}:duration=longest:normalize=0"
+    )
+    if normalize_audio:
+        amix_chain += ",loudnorm"
+    amix_chain += "[aout]"
+    filter_parts.append(amix_chain)
+
+    cmd.extend(
+        [
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "[aout]",
+            "-vn",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-movflags",
+            "+faststart",
+            str(tmp_path),
+        ]
+    )
+
+    try:
+        result = _run_subprocess(cmd)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or f"ffmpeg exited with code {result.returncode}"
+            raise MediaInvalidError(detail=detail)
+        os.replace(tmp_path, dst_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)

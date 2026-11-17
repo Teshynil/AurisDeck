@@ -43,10 +43,10 @@ def test_root_serves_index_html_and_static_assets_offline(tmp_path: Path) -> Non
         assert 'accept=".m4a,' in html
 
         for view_id in (
-            "view-simple",
+            "view-transcribe",
             "view-library",
             "view-viewer",
-            "view-advanced",
+            "view-profiles",
             "view-settings",
         ):
             assert f'id="{view_id}"' in html

@@ -50,7 +50,7 @@ from aurisdeck.domain.models import (
     validate_slug,
 )
 from aurisdeck.export.exporters import build_batch_zip
-from aurisdeck.media.ffmpeg import MediaInvalidError
+from aurisdeck.media.ffmpeg import MediaInvalidError, mix_multitrack_audio
 from aurisdeck.media.ingest import ZipSlipError, unpack_multitrack_zip
 from aurisdeck.storage.paths import DataPaths, sanitize_filename
 from aurisdeck.storage.stores import (
@@ -161,7 +161,10 @@ def _serialize_segment(segment: SegmentRecord) -> dict[str, Any]:
     }
 
 
-def _serialize_job(job: JobRecord) -> dict[str, Any]:
+def _serialize_job(job: JobRecord, paths: DataPaths | None = None) -> dict[str, Any]:
+    has_mix = False
+    if paths is not None and job.mode == "multitrack" and job.media_retained:
+        has_mix = (paths.job_media_dir(job.id) / "mix.m4a").is_file()
     return {
         "id": job.id,
         "owner_user_id": job.owner_user_id,
@@ -177,6 +180,7 @@ def _serialize_job(job: JobRecord) -> dict[str, Any]:
         "source_type": job.source_type,
         "source_fingerprint": job.source_fingerprint,
         "media_retained": job.media_retained,
+        "has_mix": has_mix,
         "effective_config": copy.deepcopy(job.effective_config),
         "error_code": job.error_code,
         "error_params": copy.deepcopy(job.error_params) if job.error_params is not None else None,
@@ -354,6 +358,8 @@ def _apply_config_overrides(
         cfg["preprocessing"].update(dict(overrides["preprocessing"]))
     if "normalize_audio" in overrides:
         cfg["preprocessing"]["normalize_audio"] = bool(overrides["normalize_audio"])
+    if "generate_mix" in overrides:
+        cfg["preprocessing"]["generate_mix"] = bool(overrides["generate_mix"])
 
     if isinstance(overrides.get("asr"), Mapping):
         cfg["asr"].update(dict(overrides["asr"]))
@@ -1043,6 +1049,7 @@ async def create_job(
 
 @router.get("")
 async def list_jobs(
+    paths: Annotated[DataPaths, Depends(get_paths)],
     job_repo: Annotated[JobRepo, Depends(get_job_repo)],
     status: Annotated[str | None, Query()] = None,
     batch_id: Annotated[str | None, Query()] = None,
@@ -1057,7 +1064,7 @@ async def list_jobs(
         offset=offset,
     )
     return {
-        "jobs": [_serialize_job(job) for job in jobs],
+        "jobs": [_serialize_job(job, paths=paths) for job in jobs],
         "limit": limit,
         "offset": offset,
     }
@@ -1079,7 +1086,7 @@ async def get_job_detail(
     job = _get_job_or_404(job_repo, job_id)
     segments = segment_repo.list_segments(job_id)
     available_formats = _scan_available_formats(paths, job_id)
-    payload = _serialize_job(job)
+    payload = _serialize_job(job, paths=paths)
     payload["segments"] = [_serialize_segment(seg) for seg in segments]
     payload["available_formats"] = available_formats
     return payload
@@ -1267,6 +1274,101 @@ async def reexport_job(
         "available_formats": _scan_available_formats(paths, job_id),
         "files": [Path(path).name for path in written],
     }
+
+
+@router.post("/{job_id}/mix")
+async def generate_job_mix(
+    job_id: str,
+    paths: Annotated[DataPaths, Depends(get_paths)],
+    job_repo: Annotated[JobRepo, Depends(get_job_repo)],
+) -> dict[str, Any]:
+    """Generate a mixed .m4a audio file for a multitrack job on demand."""
+    job = _get_job_or_404(job_repo, job_id)
+    if job.mode != "multitrack" or len(job.tracks) < 2:
+        raise ApiError(
+            status_code=422,
+            error_code="VALIDATION_ERROR",
+            detail="Audio mix is only supported for multitrack jobs with at least 2 tracks",
+        )
+    if not job.media_retained:
+        raise ApiError(
+            status_code=404,
+            error_code="MEDIA_INVALID",
+            detail="Job media files are no longer retained",
+        )
+
+    mix_path = paths.job_media_dir(job_id) / "mix.m4a"
+    if not mix_path.is_file():
+        media_root = paths.media.resolve()
+        track_inputs: list[tuple[Path, int]] = []
+        for track in sorted(job.tracks, key=lambda t: t.track_index):
+            raw_path = Path(track.media_relpath)
+            candidate = raw_path if raw_path.is_absolute() else (paths.root / raw_path)
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(media_root):
+                raise ApiError(
+                    status_code=403,
+                    error_code="FORBIDDEN",
+                    detail="Track media path resolves outside media directory",
+                )
+            if not resolved.is_file():
+                raise ApiError(
+                    status_code=404,
+                    error_code="MEDIA_INVALID",
+                    detail=f"Media file for track {track.id!r} not found on disk",
+                )
+            track_inputs.append((resolved, int(track.offset_ms or 0)))
+
+        normalize_audio = bool(
+            (job.effective_config.get("preprocessing") or {}).get("normalize_audio", False)
+        )
+        try:
+            await run_in_threadpool(
+                mix_multitrack_audio,
+                track_inputs,
+                mix_path,
+                normalize_audio=normalize_audio,
+            )
+        except MediaInvalidError as exc:
+            raise ApiError(
+                status_code=422,
+                error_code="MEDIA_INVALID",
+                detail=str(exc),
+            ) from exc
+
+    serialized = _serialize_job(job, paths=paths)
+    return {**serialized, "job": serialized}
+
+
+@router.get("/{job_id}/media/mix")
+async def stream_job_mix_media(
+    job_id: str,
+    paths: Annotated[DataPaths, Depends(get_paths)],
+    job_repo: Annotated[JobRepo, Depends(get_job_repo)],
+) -> FileResponse:
+    """Serve mixed multitrack .m4a media with native HTTP Range / 206 support."""
+    job = _get_job_or_404(job_repo, job_id)
+    if not job.media_retained:
+        raise ApiError(
+            status_code=404,
+            error_code="MEDIA_INVALID",
+            detail="Job media files are no longer retained",
+        )
+    media_root = paths.media.resolve()
+    mix_path = (paths.job_media_dir(job_id) / "mix.m4a").resolve()
+    if not mix_path.is_relative_to(media_root):
+        raise ApiError(
+            status_code=403,
+            error_code="FORBIDDEN",
+            detail="Mix media path resolves outside media directory",
+        )
+    if not mix_path.is_file():
+        raise ApiError(
+            status_code=404,
+            error_code="MEDIA_INVALID",
+            detail=f"Mixed audio for job {job_id!r} not found on disk",
+        )
+    return FileResponse(path=mix_path, media_type="audio/mp4")
 
 
 @router.get("/{job_id}/media/{track_id}")

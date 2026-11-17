@@ -24,7 +24,7 @@ from aurisdeck.db.recovery import run_startup_recovery
 from aurisdeck.db.repositories import JobRecord, JobRepo, SegmentRecord, SegmentRepo
 from aurisdeck.export.cue_segmenter import SegmentItem, WordTiming, segment_to_cues
 from aurisdeck.export.exporters import export_json, export_markdown, export_srt, export_vtt
-from aurisdeck.media.ffmpeg import MediaInvalidError, extract_wav_16k
+from aurisdeck.media.ffmpeg import MediaInvalidError, extract_wav_16k, mix_multitrack_audio
 from aurisdeck.media.ingest import SUPPORTED_MEDIA_EXTENSIONS
 from aurisdeck.pipeline.merger import TranscriptMerger
 from aurisdeck.storage.paths import DataPaths, atomic_write_text, sanitize_filename
@@ -1408,6 +1408,7 @@ class Coordinator:
         refreshed = self._job_repo.get_job(job.id)
         assert refreshed is not None
         self._export_job_outputs(refreshed, saved_segments, saved_speakers)
+        self._maybe_generate_multitrack_mix(refreshed)
 
         self._cleanup_job_tmp(job.id)
         completed_at = _utc_now()
@@ -1540,3 +1541,31 @@ class Coordinator:
             written.append(dest)
 
         return written
+
+    def _maybe_generate_multitrack_mix(self, job: JobRecord) -> Path | None:
+        if job.mode != "multitrack" or len(job.tracks) < 2 or not job.media_retained:
+            return None
+        preprocessing = job.effective_config.get("preprocessing", {})
+        if not isinstance(preprocessing, dict) or not preprocessing.get("generate_mix"):
+            return None
+
+        mix_path = self._paths.job_media_dir(job.id) / "mix.m4a"
+        if mix_path.is_file():
+            return mix_path
+
+        track_inputs: list[tuple[Path, int]] = []
+        for track in sorted(job.tracks, key=lambda t: t.track_index):
+            raw_path = Path(track.media_relpath)
+            resolved = raw_path if raw_path.is_absolute() else (self._paths.root / raw_path)
+            if not resolved.is_file():
+                logger.warning("Skipping mix generation for job %s; missing track %s", job.id, resolved)
+                return None
+            track_inputs.append((resolved, int(track.offset_ms or 0)))
+
+        normalize_audio = bool(preprocessing.get("normalize_audio", False))
+        try:
+            mix_multitrack_audio(track_inputs, mix_path, normalize_audio=normalize_audio)
+        except MediaInvalidError as exc:
+            logger.warning("Failed generating multitrack mix for job %s: %s", job.id, exc)
+            return None
+        return mix_path

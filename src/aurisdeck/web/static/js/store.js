@@ -13,7 +13,7 @@ const DEFAULT_INITIAL_STATE = {
   replacements: [],
   devices: [],
   jobs: [],
-  activeTab: "simple",
+  activeTab: "transcribe",
   selectedJobId: null,
   toasts: [],
   theme: "system",

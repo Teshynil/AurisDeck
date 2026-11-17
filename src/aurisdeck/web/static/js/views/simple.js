@@ -38,6 +38,7 @@ const formState = {
   maxSpeakers: "",
   profileId: "",
   title: "",
+  generateMix: null,
   hotwords: [],
   hotwordDraft: "",
   multitrackRows: [],
@@ -122,13 +123,15 @@ function resolveDefaultProfileId(profiles) {
 }
 
 function getProfileLabel(profile) {
-  const locale = store.getState().locale || i18n.getLocale() || "es";
-  return (
-    profile?.display_name_i18n?.[locale] ||
-    profile?.display_name ||
-    profile?.id ||
-    ""
-  );
+  return profile?.display_name || profile?.id || "";
+}
+
+function resolveGenerateMix(profiles, profileId) {
+  if (formState.generateMix !== null) {
+    return Boolean(formState.generateMix);
+  }
+  const active = profiles.find((p) => p.id === profileId);
+  return Boolean(active?.preprocessing?.generate_mix);
 }
 
 function isSingleZipSelection(files) {
@@ -368,6 +371,13 @@ async function handleSubmit() {
   const profiles = getSimpleProfiles();
   const profileId = resolveDefaultProfileId(profiles);
   formState.profileId = profileId;
+
+  if (formState.uiMode === "multitrack") {
+    overrides.preprocessing = {
+      ...(overrides.preprocessing || {}),
+      generate_mix: resolveGenerateMix(profiles, profileId),
+    };
+  }
 
   const fd = new FormData();
   for (const file of formState.files) {
@@ -812,6 +822,10 @@ function buildProfileAndTitleBlock() {
 
   profileSelect.addEventListener("change", (event) => {
     formState.profileId = event.target.value;
+    formState.generateMix = null;
+    if (formState.uiMode === "multitrack") {
+      renderComposer();
+    }
   });
 
   profileGroup.appendChild(profileLabel);
@@ -840,6 +854,28 @@ function buildProfileAndTitleBlock() {
 
   grid.appendChild(profileGroup);
   grid.appendChild(titleGroup);
+
+  if (formState.uiMode === "multitrack") {
+    const mixLabel = document.createElement("label");
+    mixLabel.className = "checkbox-label";
+    mixLabel.style.gridColumn = "1 / -1";
+
+    const mixInput = document.createElement("input");
+    mixInput.id = "simple-generate-mix";
+    mixInput.type = "checkbox";
+    mixInput.checked = resolveGenerateMix(profiles, activeProfileId);
+    mixInput.addEventListener("change", (event) => {
+      formState.generateMix = Boolean(event.target.checked);
+    });
+
+    const mixText = document.createElement("span");
+    mixText.textContent = i18n.t("simple.generate_mix");
+
+    mixLabel.appendChild(mixInput);
+    mixLabel.appendChild(mixText);
+    grid.appendChild(mixLabel);
+  }
+
   return grid;
 }
 

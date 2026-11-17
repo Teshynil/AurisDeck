@@ -287,6 +287,11 @@ export const reexportJob = (id, body = null) =>
 export const deleteJob = (id) =>
   request(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
 
+export const generateJobMix = (id) =>
+  request(`/api/v1/jobs/${encodeURIComponent(id)}/mix`, { method: "POST" });
+
+export const jobMixMediaUrl = (jobId) =>
+  apiUrl(`/api/v1/jobs/${encodeURIComponent(jobId)}/media/mix`);
 export const jobMediaUrl = (jobId, trackId) =>
   apiUrl(`/api/v1/jobs/${encodeURIComponent(jobId)}/media/${encodeURIComponent(trackId)}`);
 export const jobDownloadUrl = (jobId, fmt) =>
@@ -335,6 +340,8 @@ export const api = {
   patchSpeakers,
   reexportJob,
   deleteJob,
+  generateJobMix,
+  jobMixMediaUrl,
   jobMediaUrl,
   jobDownloadUrl,
   batchDownloadUrl,

@@ -22,6 +22,7 @@ from aurisdeck.media import (
     probe_duration_ms,
     unpack_multitrack_zip,
 )
+from aurisdeck.media.ffmpeg import mix_multitrack_audio
 
 
 def _write_zip(zip_path: Path, entries: list[tuple[str, bytes]]) -> Path:
@@ -343,3 +344,33 @@ def test_extract_wav_16k_commands_loudnorm_and_error(tmp_path: Path) -> None:
             extract_wav_16k(src, dst)
         assert exc_info.value.error_code == "MEDIA_INVALID"
         assert "Invalid data" in exc_info.value.detail
+
+
+def test_mix_multitrack_audio_applies_offsets_and_writes_atomically(tmp_path: Path) -> None:
+    t1 = tmp_path / "t1.flac"
+    t2 = tmp_path / "t2.flac"
+    t1.write_bytes(b"a")
+    t2.write_bytes(b"b")
+    dst = tmp_path / "out" / "mix.m4a"
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs.get("shell") is not True
+        tmp_out = Path(cmd[-1])
+        tmp_out.write_bytes(b"fake-m4a")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=fake_run) as mock_run:
+        mix_multitrack_audio([(t1, 0), (t2, 350)], dst, normalize_audio=True)
+
+    assert dst.is_file()
+    assert dst.read_bytes() == b"fake-m4a"
+    cmd = mock_run.call_args.args[0]
+    assert cmd[0] == "ffmpeg"
+    fc_idx = cmd.index("-filter_complex")
+    filter_complex = cmd[fc_idx + 1]
+    assert "[1:a]adelay=350:all=1[a1]" in filter_complex
+    assert "[0:a][a1]amix=inputs=2:duration=longest:normalize=0,loudnorm[aout]" in filter_complex
+    assert "-c:a" in cmd and "aac" in cmd
+
+    with pytest.raises(MediaInvalidError):
+        mix_multitrack_audio([], dst)

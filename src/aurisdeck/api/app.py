@@ -72,7 +72,6 @@ class MePreferencesPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     locale: SlugStr | None = None
-    ui_mode: Literal["simple", "advanced"] | None = None
     default_profile_id: SlugStr | None = None
     player: PlayerPreferencesPatch | None = None
     preferences: MePreferencesPatch | None = None
@@ -132,8 +131,6 @@ def _apply_preferences_patch(
 
     if patch.locale is not None:
         updated["locale"] = patch.locale
-    if patch.ui_mode is not None:
-        updated["ui_mode"] = patch.ui_mode
     if patch.default_profile_id is not None:
         updated["default_profile_id"] = patch.default_profile_id
     if patch.player is not None:

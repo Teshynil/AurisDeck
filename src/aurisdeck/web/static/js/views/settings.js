@@ -64,16 +64,14 @@ function extractAccountForm(state) {
   const rate = Number(player.playback_rate);
   return {
     locale: typeof prefs.locale === "string" && prefs.locale ? prefs.locale : state.locale || "es",
-    ui_mode: prefs.ui_mode === "advanced" ? "advanced" : "simple",
     default_profile_id: defaultProfileId,
     playback_rate: Number.isFinite(rate) && rate >= 0.25 && rate <= 4.0 ? rate : 1.0,
     auto_scroll: player.auto_scroll !== undefined ? Boolean(player.auto_scroll) : true,
   };
 }
 
-function localizedProfileName(profile, locale) {
-  const i18nName = profile?.display_name_i18n?.[locale];
-  return i18nName || profile?.display_name || profile?.id || "";
+function localizedProfileName(profile) {
+  return profile?.display_name || profile?.id || "";
 }
 
 /**
@@ -231,7 +229,6 @@ export function mount(container) {
     const newLocale = local.account.locale || "es";
     const patch = {
       locale: newLocale,
-      ui_mode: local.account.ui_mode === "advanced" ? "advanced" : "simple",
       player: {
         playback_rate: Number(local.account.playback_rate) || 1.0,
         auto_scroll: Boolean(local.account.auto_scroll),
@@ -385,36 +382,6 @@ export function mount(container) {
                   selected: loc.code === local.account.locale,
                 })
               )
-            )
-          ),
-          el(
-            "div",
-            { className: "form-group" },
-            el("label", {
-              className: "label",
-              for: "settings-account-ui-mode",
-              textContent: t("settings.account.ui_mode"),
-            }),
-            el(
-              "select",
-              {
-                id: "settings-account-ui-mode",
-                className: "select",
-                onChange: (ev) => {
-                  local.account.ui_mode = ev.target.value;
-                  local.accountDirty = true;
-                },
-              },
-              el("option", {
-                value: "simple",
-                textContent: t("settings.account.ui_mode_simple"),
-                selected: local.account.ui_mode === "simple",
-              }),
-              el("option", {
-                value: "advanced",
-                textContent: t("settings.account.ui_mode_advanced"),
-                selected: local.account.ui_mode === "advanced",
-              })
             )
           ),
           el(

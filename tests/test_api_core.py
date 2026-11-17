@@ -228,13 +228,11 @@ def test_healthz_locales_and_me_in_none_auth_mode(tmp_path: Path) -> None:
         assert me_data["id"] == "default"
         assert me_data["role"] == "admin"
         assert me_data["preferences"]["locale"] == "es"
-        assert me_data["preferences"]["ui_mode"] == "simple"
 
         me_patch = client.patch(
             "/api/v1/me",
             json={
                 "locale": "en",
-                "ui_mode": "advanced",
                 "default_profile_id": "en-general",
                 "player": {"playback_rate": 1.5, "auto_scroll": False},
             },
@@ -242,7 +240,6 @@ def test_healthz_locales_and_me_in_none_auth_mode(tmp_path: Path) -> None:
         assert me_patch.status_code == 200
         patched_prefs = me_patch.json()["preferences"]
         assert patched_prefs["locale"] == "en"
-        assert patched_prefs["ui_mode"] == "advanced"
         assert patched_prefs["default_profile_id"] == "en-general"
         assert patched_prefs["player"] == {"playback_rate": 1.5, "auto_scroll": False}
 
@@ -252,7 +249,7 @@ def test_healthz_locales_and_me_in_none_auth_mode(tmp_path: Path) -> None:
         assert me_after.json()["preferences"] == patched_prefs
 
         # Invalid preference validation returns structured error_code
-        invalid_me = client.patch("/api/v1/me", json={"ui_mode": "invalid"})
+        invalid_me = client.patch("/api/v1/me", json={"player": {"playback_rate": 99.0}})
         assert invalid_me.status_code == 422
         assert invalid_me.json()["error_code"] == "VALIDATION_ERROR"
 

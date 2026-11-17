@@ -85,7 +85,6 @@ def test_run_migrations_is_idempotent_and_seeds_default_user(tmp_path: Path) -> 
         assert user["api_token_hash"] is None
         assert json.loads(user["preferences_json"]) == {
             "locale": "es",
-            "ui_mode": "simple",
             "default_profile_id": "es-tecnico",
             "player": {"playback_rate": 1.0, "auto_scroll": True},
         }

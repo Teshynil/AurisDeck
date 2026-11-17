@@ -30,7 +30,7 @@ VALUES (
     'admin',
     NULL,
     NULL,
-    '{"locale":"es","ui_mode":"simple","default_profile_id":"es-tecnico","player":{"playback_rate":1.0,"auto_scroll":true}}',
+    '{"locale":"es","default_profile_id":"es-tecnico","player":{"playback_rate":1.0,"auto_scroll":true}}',
     strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 );

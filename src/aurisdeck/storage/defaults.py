@@ -7,6 +7,7 @@ from aurisdeck.domain.models import (
     ProfileDiarizationConfig,
     ProfileInputConfig,
     ProfileOutputConfig,
+    ProfilePreprocessingConfig,
     ProfileSchema,
     SubtitlesOutputConfig,
 )
@@ -19,10 +20,6 @@ def default_profiles() -> list[ProfileSchema]:
         ProfileSchema(
             id="es-tecnico",
             display_name="Español + Términos Técnicos",
-            display_name_i18n={
-                "es": "Español + Términos Técnicos",
-                "en": "Spanish + Technical Terms",
-            },
             simple_visible=True,
             input=ProfileInputConfig(mode="single"),
             asr=ProfileAsrConfig(
@@ -47,10 +44,6 @@ def default_profiles() -> list[ProfileSchema]:
         ProfileSchema(
             id="subtitulos-video",
             display_name="Subtítulos de Video",
-            display_name_i18n={
-                "es": "Subtítulos de Video",
-                "en": "Video Subtitles",
-            },
             simple_visible=True,
             input=ProfileInputConfig(mode="single"),
             asr=ProfileAsrConfig(
@@ -75,12 +68,9 @@ def default_profiles() -> list[ProfileSchema]:
         ProfileSchema(
             id="multipista-sync",
             display_name="Multipista Sincronizada",
-            display_name_i18n={
-                "es": "Multipista Sincronizada",
-                "en": "Synchronized Multitrack",
-            },
             simple_visible=True,
             input=ProfileInputConfig(mode="multitrack"),
+            preprocessing=ProfilePreprocessingConfig(generate_mix=True),
             asr=ProfileAsrConfig(
                 model="large-v3-turbo",
                 language="es",
@@ -103,10 +93,6 @@ def default_profiles() -> list[ProfileSchema]:
         ProfileSchema(
             id="en-general",
             display_name="English General",
-            display_name_i18n={
-                "es": "Inglés General",
-                "en": "English General",
-            },
             simple_visible=True,
             input=ProfileInputConfig(mode="single"),
             asr=ProfileAsrConfig(

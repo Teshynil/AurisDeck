@@ -83,10 +83,9 @@ function createEmptyProfile(ownerId = "default") {
     owner_user_id: ownerId || "default",
     visibility: "shared",
     display_name: "",
-    display_name_i18n: { es: "", en: "" },
     simple_visible: true,
     input: { mode: "single" },
-    preprocessing: { normalize_audio: false },
+    preprocessing: { normalize_audio: false, generate_mix: false },
     asr: {
       backend: "faster-whisper",
       model: "large-v3-turbo",
@@ -139,10 +138,6 @@ function normalizeProfile(raw, fallbackOwner = "default") {
   const hw = src.hardware && typeof src.hardware === "object" ? src.hardware : {};
   const out = src.output && typeof src.output === "object" ? src.output : {};
   const subs = out.subtitles && typeof out.subtitles === "object" ? out.subtitles : {};
-  const i18nNames =
-    src.display_name_i18n && typeof src.display_name_i18n === "object"
-      ? src.display_name_i18n
-      : {};
 
   let normalizedGpus = "auto";
   if (hw.gpus === "cpu" || hw.gpus === "auto") {
@@ -164,17 +159,13 @@ function normalizeProfile(raw, fallbackOwner = "default") {
     owner_user_id: typeof src.owner_user_id === "string" && src.owner_user_id ? src.owner_user_id : base.owner_user_id,
     visibility: src.visibility === "private" ? "private" : "shared",
     display_name: typeof src.display_name === "string" ? src.display_name : "",
-    display_name_i18n: {
-      ...i18nNames,
-      es: typeof i18nNames.es === "string" ? i18nNames.es : "",
-      en: typeof i18nNames.en === "string" ? i18nNames.en : "",
-    },
     simple_visible: src.simple_visible !== undefined ? Boolean(src.simple_visible) : true,
     input: {
       mode: INPUT_MODES.includes(input.mode) ? input.mode : "single",
     },
     preprocessing: {
       normalize_audio: Boolean(pre.normalize_audio),
+      generate_mix: Boolean(pre.generate_mix),
     },
     asr: {
       backend: typeof asr.backend === "string" && asr.backend ? asr.backend : "faster-whisper",
@@ -291,9 +282,8 @@ function createEmptyReplacement(ownerId = "default") {
   };
 }
 
-function localizedProfileName(profile, locale) {
-  const i18nName = profile?.display_name_i18n?.[locale];
-  return i18nName || profile?.display_name || profile?.id || "";
+function localizedProfileName(profile) {
+  return profile?.display_name || profile?.id || "";
 }
 
 /**
@@ -529,25 +519,18 @@ export function mount(container) {
       };
     }
 
-    const i18nMap = { ...(p.display_name_i18n || {}) };
-    for (const key of Object.keys(i18nMap)) {
-      if (typeof i18nMap[key] === "string" && !i18nMap[key].trim()) {
-        delete i18nMap[key];
-      } else if (typeof i18nMap[key] === "string") {
-        i18nMap[key] = i18nMap[key].trim();
-      }
-    }
-
     const payload = {
       schema_version: 1,
       id,
       owner_user_id: p.owner_user_id || store.getState().user?.id || "default",
       visibility: p.visibility === "private" ? "private" : "shared",
       display_name: displayName,
-      display_name_i18n: i18nMap,
       simple_visible: Boolean(p.simple_visible),
       input: { mode: p.input.mode },
-      preprocessing: { normalize_audio: Boolean(p.preprocessing.normalize_audio) },
+      preprocessing: {
+        normalize_audio: Boolean(p.preprocessing.normalize_audio),
+        generate_mix: p.input.mode === "multitrack" ? Boolean(p.preprocessing.generate_mix) : false,
+      },
       asr: {
         backend: p.asr.backend || "faster-whisper",
         model: p.asr.model || "large-v3-turbo",
@@ -1072,42 +1055,6 @@ export function mount(container) {
             { className: "form-group" },
             el("label", {
               className: "label",
-              for: "adv-prof-name-es",
-              textContent: `${t("advanced.profiles.display_name")} (es)`,
-            }),
-            el("input", {
-              id: "adv-prof-name-es",
-              className: "input",
-              type: "text",
-              value: p.display_name_i18n?.es || "",
-              onInput: (ev) => {
-                p.display_name_i18n.es = ev.target.value;
-              },
-            })
-          ),
-          el(
-            "div",
-            { className: "form-group" },
-            el("label", {
-              className: "label",
-              for: "adv-prof-name-en",
-              textContent: `${t("advanced.profiles.display_name")} (en)`,
-            }),
-            el("input", {
-              id: "adv-prof-name-en",
-              className: "input",
-              type: "text",
-              value: p.display_name_i18n?.en || "",
-              onInput: (ev) => {
-                p.display_name_i18n.en = ev.target.value;
-              },
-            })
-          ),
-          el(
-            "div",
-            { className: "form-group" },
-            el("label", {
-              className: "label",
               for: "adv-prof-input-mode",
               textContent: t("advanced.profiles.input_mode"),
             }),
@@ -1118,6 +1065,10 @@ export function mount(container) {
                 className: "select",
                 onChange: (ev) => {
                   p.input.mode = ev.target.value;
+                  if (p.input.mode !== "multitrack") {
+                    p.preprocessing.generate_mix = false;
+                  }
+                  render();
                 },
               },
               INPUT_MODES.map((modeOpt) =>
@@ -1156,7 +1107,21 @@ export function mount(container) {
               },
             }),
             el("span", { textContent: t("advanced.profiles.normalize_audio") })
-          )
+          ),
+          p.input.mode === "multitrack"
+            ? el(
+                "label",
+                { className: "checkbox-label" },
+                el("input", {
+                  type: "checkbox",
+                  checked: Boolean(p.preprocessing.generate_mix),
+                  onChange: (ev) => {
+                    p.preprocessing.generate_mix = ev.target.checked;
+                  },
+                }),
+                el("span", { textContent: t("advanced.profiles.generate_mix") })
+              )
+            : null
         )
       )
     );
@@ -2454,7 +2419,7 @@ export function mount(container) {
   }
 
   const unsubscribe = store.subscribe((state, prevState) => {
-    if (state.activeTab === "advanced" && prevState.activeTab !== "advanced") {
+    if (state.activeTab === "profiles" && prevState.activeTab !== "profiles") {
       void ensureConfigResourcesLoaded();
     }
 
@@ -2521,7 +2486,7 @@ export function mount(container) {
   });
 
   render();
-  if (store.getState().activeTab === "advanced") {
+  if (store.getState().activeTab === "profiles") {
     void ensureConfigResourcesLoaded();
   }
 

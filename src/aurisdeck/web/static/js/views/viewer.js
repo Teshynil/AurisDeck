@@ -21,6 +21,7 @@ const ACTIVE_STATUSES = new Set([
 
 const DEFAULT_SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 const EXPORT_FORMATS = ["vtt", "srt", "md", "json"];
+const MIX_TRACK_ID = "__mix__";
 
 const containerCleanups = new WeakMap();
 
@@ -284,6 +285,7 @@ export function mount(container) {
     vttSeq: 0,
 
     selectedTrackId: "",
+    generatingMix: false,
     playbackRate: defaults.playbackRate,
     autoScroll: defaults.autoScroll,
     audioError: "",
@@ -510,12 +512,15 @@ export function mount(container) {
       local.loadError = "";
       prevSnapshotStatus = detail.status || null;
       prevSnapshotDiarStatus = detail.diarization_status || null;
+      const hasMix = Boolean(detail.has_mix);
       if (
         !local.selectedTrackId ||
-        !Array.isArray(detail.tracks) ||
-        !detail.tracks.some((t) => t.id === local.selectedTrackId)
+        (local.selectedTrackId === MIX_TRACK_ID && !hasMix) ||
+        (local.selectedTrackId !== MIX_TRACK_ID &&
+          (!Array.isArray(detail.tracks) ||
+            !detail.tracks.some((t) => t.id === local.selectedTrackId)))
       ) {
-        local.selectedTrackId = detail.tracks?.[0]?.id || "";
+        local.selectedTrackId = hasMix ? MIX_TRACK_ID : detail.tracks?.[0]?.id || "";
       }
       syncSpeakerDraftsFromJob(detail);
       syncRetryDefaultsFromJob(detail);
@@ -900,10 +905,7 @@ export function mount(container) {
                 el("option", {
                   value: profile.id,
                   selected: local.retryProfileId === profile.id,
-                  textContent:
-                    profile?.display_name_i18n?.[locale] ||
-                    profile?.display_name ||
-                    profile.id,
+                  textContent: profile?.display_name || profile.id,
                 })
               )
             )
@@ -1036,8 +1038,14 @@ export function mount(container) {
       return;
     }
 
-    if (!tracks.some((t) => t.id === local.selectedTrackId)) {
-      local.selectedTrackId = tracks[0].id;
+    const hasMix = Boolean(job?.has_mix);
+    if (
+      !local.selectedTrackId ||
+      (local.selectedTrackId === MIX_TRACK_ID && !hasMix) ||
+      (local.selectedTrackId !== MIX_TRACK_ID &&
+        !tracks.some((t) => t.id === local.selectedTrackId))
+    ) {
+      local.selectedTrackId = hasMix ? MIX_TRACK_ID : tracks[0].id;
     }
 
     const speakerMap = buildSpeakerMap(job);
@@ -1045,7 +1053,10 @@ export function mount(container) {
     const audio = document.createElement("audio");
     audio.controls = true;
     audio.preload = "metadata";
-    audio.src = api.jobMediaUrl(job.id, local.selectedTrackId);
+    audio.src =
+      local.selectedTrackId === MIX_TRACK_ID
+        ? api.jobMixMediaUrl(job.id)
+        : api.jobMediaUrl(job.id, local.selectedTrackId);
     audio.playbackRate = local.playbackRate;
     audioEl = audio;
 
@@ -1054,8 +1065,34 @@ export function mount(container) {
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
     audio.addEventListener("error", handleAudioError);
 
+    const trackOptions = [];
+    if (hasMix) {
+      trackOptions.push(
+        el("option", {
+          value: MIX_TRACK_ID,
+          selected: local.selectedTrackId === MIX_TRACK_ID,
+          textContent: tl("viewer.all_tracks_mix", "Todas las pistas (Mix)", "All tracks (Mix)"),
+        })
+      );
+    }
+    for (const track of tracks) {
+      const spLabel = track.speaker_key
+        ? speakerMap.get(track.speaker_key) || track.speaker_key
+        : "";
+      const label = spLabel
+        ? `${spLabel} — ${track.original_filename}`
+        : track.original_filename;
+      trackOptions.push(
+        el("option", {
+          value: track.id,
+          selected: track.id === local.selectedTrackId,
+          textContent: label,
+        })
+      );
+    }
+
     const trackSelect =
-      tracks.length > 1
+      tracks.length > 1 || hasMix
         ? el(
             "label",
             { className: "row", style: "gap: 0.4rem;" },
@@ -1079,7 +1116,10 @@ export function mount(container) {
                   local.selectedTrackId = nextId;
                   local.pendingSeekSec = prevTime > 0 ? prevTime : null;
                   if (audioEl) {
-                    audioEl.src = api.jobMediaUrl(job.id, nextId);
+                    audioEl.src =
+                      nextId === MIX_TRACK_ID
+                        ? api.jobMixMediaUrl(job.id)
+                        : api.jobMediaUrl(job.id, nextId);
                     audioEl.load();
                     if (wasPlaying) {
                       audioEl.play().catch(() => {});
@@ -1087,21 +1127,58 @@ export function mount(container) {
                   }
                 },
               },
-              tracks.map((track) => {
-                const spLabel = track.speaker_key
-                  ? speakerMap.get(track.speaker_key) || track.speaker_key
-                  : "";
-                const label = spLabel
-                  ? `${spLabel} — ${track.original_filename}`
-                  : track.original_filename;
-                return el("option", {
-                  value: track.id,
-                  selected: track.id === local.selectedTrackId,
-                  textContent: label,
-                });
-              })
+              trackOptions
             )
           )
+        : null;
+
+    const generateMixBtn =
+      job.mode === "multitrack" && tracks.length > 1 && !hasMix
+        ? el("button", {
+            type: "button",
+            className: "btn btn-secondary btn-sm",
+            disabled: local.generatingMix,
+            textContent: local.generatingMix
+              ? tl("viewer.generating_mix", "Generando mix...", "Generating mix...")
+              : tl("viewer.generate_mix", "Generar mix (todas las pistas)", "Generate mix (all tracks)"),
+            onClick: async () => {
+              if (local.generatingMix) {
+                return;
+              }
+              const wasPlaying = Boolean(audioEl && !audioEl.paused);
+              const prevTime = Number(audioEl?.currentTime || 0);
+              local.generatingMix = true;
+              local.audioError = "";
+              renderPlayer();
+              try {
+                const res = await api.generateJobMix(job.id);
+                const updated = res?.job && res.job.id ? res.job : res;
+                if (local.disposed) {
+                  return;
+                }
+                if (updated && updated.id) {
+                  local.job = { ...local.job, ...updated, has_mix: true };
+                  upsertJobInStore(local.job);
+                } else {
+                  local.job = { ...local.job, has_mix: true };
+                }
+                local.selectedTrackId = MIX_TRACK_ID;
+                local.pendingSeekSec = prevTime > 0 ? prevTime : null;
+                local.generatingMix = false;
+                renderPlayer();
+                if (wasPlaying && audioEl) {
+                  audioEl.play().catch(() => {});
+                }
+              } catch (err) {
+                if (local.disposed) {
+                  return;
+                }
+                local.generatingMix = false;
+                local.audioError = err?.message || i18n.t("errors.MEDIA_INVALID");
+                renderPlayer();
+              }
+            },
+          })
         : null;
 
     const speedOptions = DEFAULT_SPEEDS.includes(local.playbackRate)
@@ -1169,6 +1246,7 @@ export function mount(container) {
           { className: "player-bar" },
           audio,
           trackSelect,
+          generateMixBtn,
           speedSelect,
           autoScrollToggle
         ),

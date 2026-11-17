@@ -6,6 +6,7 @@ import io
 import json
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -625,3 +626,66 @@ def test_cancel_retry_diarize_delete_and_404_job_not_found(tmp_path: Path) -> No
         assert not paths.job_checkpoints_dir(job_id).exists()
         assert not paths.job_outputs_dir(job_id).exists()
         assert not paths.job_tmp_dir(job_id).exists()
+
+
+def test_multitrack_mix_endpoints_generate_and_stream(tmp_path: Path) -> None:
+    app, _stub = _build_jobs_test_app(tmp_path)
+    paths = DataPaths(tmp_path)
+    with TestClient(app) as client:
+        # Create a multitrack job with 2 tracks
+        create_resp = client.post(
+            "/api/v1/jobs",
+            data={
+                "mode": "multitrack",
+                "profile_id": "multipista-sync",
+                "overrides_json": json.dumps({"track_offsets": {"0": 0, "1": 250}}),
+            },
+            files=[
+                ("files", ("alice.flac", b"track-a", "audio/flac")),
+                ("files", ("bob.flac", b"track-b", "audio/flac")),
+            ],
+        )
+        assert create_resp.status_code == 201
+        job_data = create_resp.json()["job"]
+        job_id = job_data["id"]
+        assert job_data["has_mix"] is False
+        assert job_data["effective_config"]["preprocessing"]["generate_mix"] is True
+
+        # Streaming mix before it exists -> 404
+        missing_mix = client.get(f"/api/v1/jobs/{job_id}/media/mix")
+        assert missing_mix.status_code == 404
+
+        def fake_mix(tracks: list[tuple[Path, int]], dst: Path | str, normalize_audio: bool = False) -> None:
+            assert len(tracks) == 2
+            assert tracks[0][1] == 0
+            assert tracks[1][1] == 250
+            Path(dst).write_bytes(b"ftypM4A-fake-mix-bytes")
+
+        with patch("aurisdeck.api.routes_jobs.mix_multitrack_audio", side_effect=fake_mix):
+            gen_resp = client.post(f"/api/v1/jobs/{job_id}/mix")
+            assert gen_resp.status_code == 200
+            assert gen_resp.json()["has_mix"] is True
+
+        # Detail endpoint reports has_mix=True
+        detail_resp = client.get(f"/api/v1/jobs/{job_id}")
+        assert detail_resp.status_code == 200
+        assert detail_resp.json()["has_mix"] is True
+
+        # Stream mix with Range support
+        stream_resp = client.get(
+            f"/api/v1/jobs/{job_id}/media/mix",
+            headers={"Range": "bytes=0-6"},
+        )
+        assert stream_resp.status_code == 206
+        assert stream_resp.content == b"ftypM4A"
+
+        # Single-track job rejects /mix with 422
+        single_resp = client.post(
+            "/api/v1/jobs",
+            data={"mode": "single", "profile_id": "es-tecnico"},
+            files=[("files", ("solo.wav", b"solo-bytes", "audio/wav"))],
+        )
+        assert single_resp.status_code == 201
+        single_id = single_resp.json()["job"]["id"]
+        bad_mix = client.post(f"/api/v1/jobs/{single_id}/mix")
+        assert bad_mix.status_code == 422

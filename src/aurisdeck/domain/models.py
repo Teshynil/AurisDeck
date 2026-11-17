@@ -39,6 +39,7 @@ class ProfilePreprocessingConfig(BaseModel):
     """Audio preprocessing options applied prior to ASR."""
 
     normalize_audio: bool = False
+    generate_mix: bool = False
 
 
 class ProfileAsrConfig(BaseModel):
@@ -119,7 +120,6 @@ class ProfileSchema(BaseModel):
     owner_user_id: str = Field(default="default", min_length=1)
     visibility: Literal["shared", "private"] = "shared"
     display_name: str = Field(min_length=1)
-    display_name_i18n: dict[str, str] = Field(default_factory=dict)
     simple_visible: bool = True
     input: ProfileInputConfig = Field(default_factory=ProfileInputConfig)
     preprocessing: ProfilePreprocessingConfig = Field(default_factory=ProfilePreprocessingConfig)
