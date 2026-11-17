@@ -1,0 +1,266 @@
+{
+  "_meta": {
+    "code": "en",
+    "name": "English",
+    "direction": "ltr"
+  },
+  "nav": {
+    "brand": "AurisDeck",
+    "simple": "Transcribe",
+    "library": "Library",
+    "viewer": "Viewer",
+    "advanced": "Advanced",
+    "settings": "Settings",
+    "login": "Sign in",
+    "logout": "Sign out",
+    "theme_toggle": "Toggle theme"
+  },
+  "common": {
+    "save": "Save",
+    "saved": "Saved",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "duplicate": "Duplicate",
+    "close": "Close",
+    "confirm": "Confirm",
+    "loading": "Loading...",
+    "search": "Search",
+    "download": "Download",
+    "export": "Export",
+    "retry": "Retry",
+    "actions": "Actions",
+    "yes": "Yes",
+    "no": "No",
+    "none": "None",
+    "auto": "Auto",
+    "cpu": "CPU",
+    "cuda": "CUDA GPU",
+    "error": "Error",
+    "success": "Done",
+    "optional": "Optional",
+    "items_count": {
+      "one": "{count} item",
+      "other": "{count} items"
+    }
+  },
+  "simple": {
+    "title": "New transcription",
+    "subtitle": "Upload audio, video, or a ZIP archive and choose how to process it.",
+    "dropzone_title": "Drag files here or click to browse",
+    "dropzone_hint": "Supports .m4a, .mp3, .wav, .flac, .ogg, .opus, .aac, .mp4, .mkv, .webm, .mov, and .zip",
+    "select_files": "Select files",
+    "selected_files": {
+      "one": "{count} file selected",
+      "other": "{count} files selected"
+    },
+    "mode_label": "Input mode",
+    "modes": {
+      "single": {
+        "title": "Single file",
+        "description": "One audio or video file without speaker separation."
+      },
+      "diarize": {
+        "title": "Single file with diarization",
+        "description": "Automatically detects speaker turns."
+      },
+      "multitrack": {
+        "title": "Synchronized multitrack",
+        "description": "Multiple audio tracks or ZIP with one speaker per track."
+      },
+      "batch": {
+        "title": "Independent batch",
+        "description": "Process multiple files in parallel and download together."
+      }
+    },
+    "min_speakers": "Min speakers",
+    "max_speakers": "Max speakers",
+    "profile_label": "Profile",
+    "hotwords_label": "Difficult words or names",
+    "hotwords_placeholder": "Type a term and press Enter or comma...",
+    "title_label": "Job title",
+    "title_placeholder": "Optional; defaults to the file name",
+    "multitrack_table": {
+      "filename": "File",
+      "speaker_name": "Speaker",
+      "offset_ms": "Offset (ms)",
+      "duration": "Duration"
+    },
+    "submit": "Transcribe",
+    "submitting": "Submitting...",
+    "queue_title": "Active queue and devices",
+    "queue_empty": "No jobs are currently running.",
+    "open_viewer": "Open viewer"
+  },
+  "advanced": {
+    "title": "Advanced configuration",
+    "tabs": {
+      "profiles": "JSON Profiles",
+      "glossaries": "Glossaries",
+      "replacements": "Replacements"
+    },
+    "profiles": {
+      "select": "Selected profile",
+      "new_profile": "New profile",
+      "raw_json_toggle": "View / Edit raw JSON",
+      "invalid_json": "The entered JSON is invalid.",
+      "display_name": "Display name",
+      "simple_visible": "Show in simple view",
+      "input_mode": "Input mode",
+      "normalize_audio": "Normalize audio (ffmpeg)",
+      "asr_model": "ASR model",
+      "asr_language": "Language",
+      "compute_type": "Compute type",
+      "beam_size": "Beam size",
+      "vad_filter": "Silero VAD filter",
+      "word_timestamps": "Word timestamps",
+      "diarization_enabled": "Enable diarization",
+      "initial_prompt": "Initial prompt",
+      "hotwords": "Hotwords",
+      "glossaries": "Linked glossaries",
+      "replacements": "Replacement dictionaries",
+      "inline_replacements": "Inline replacements",
+      "hardware_gpus": "GPU / CPU devices",
+      "hardware_cpu_fallback": "Allow CPU fallback",
+      "hardware_cpu_threads": "CPU threads (0 = auto)",
+      "output_formats": "Output formats",
+      "voice_style": "Subtitle speaker style",
+      "max_cue_seconds": "Max cue duration (s)",
+      "max_chars_per_line": "Max characters per line",
+      "max_lines_per_cue": "Max lines per cue"
+    },
+    "glossaries": {
+      "name": "Glossary name",
+      "terms": "Terms (one per line)",
+      "import_button": "Import .txt / .csv",
+      "empty": "No glossaries created yet."
+    },
+    "replacements": {
+      "name": "Dictionary name",
+      "case_sensitive": "Case sensitive",
+      "source_placeholder": "Detected form",
+      "target_placeholder": "Exact form",
+      "add_rule": "Add rule",
+      "empty": "No replacement dictionaries yet."
+    }
+  },
+  "library": {
+    "title": "Transcription library",
+    "search_placeholder": "Search by title or speaker...",
+    "filter_all": "All",
+    "filter_active": "Running",
+    "filter_completed": "Completed",
+    "filter_failed": "Failed",
+    "empty": "No transcriptions yet.",
+    "columns": {
+      "title": "Title",
+      "mode": "Mode",
+      "status": "Status",
+      "language": "Language",
+      "created_at": "Created",
+      "actions": "Actions"
+    },
+    "delete_confirm": "Delete this job and its associated files?"
+  },
+  "viewer": {
+    "title": "Transcript viewer",
+    "no_job_selected": "Select a transcription from the library.",
+    "play": "Play",
+    "pause": "Pause",
+    "playback_rate": "Speed",
+    "auto_scroll": "Auto-scroll",
+    "speakers_title": "Speakers",
+    "rename_speaker": "Rename speaker",
+    "speaker_placeholder": "Speaker alias",
+    "diarize_now": "Diarize now",
+    "reexport": "Re-export",
+    "downloads_title": "Downloads",
+    "download_vtt": "WebVTT (.vtt)",
+    "download_srt": "SubRip (.srt)",
+    "download_md": "Markdown (.md)",
+    "download_json": "JSON (.json)",
+    "download_zip": "ZIP bundle (.zip)",
+    "no_segments": "This job has no transcribed segments yet."
+  },
+  "settings": {
+    "title": "Settings",
+    "account": {
+      "title": "Account settings",
+      "description": "Personal interface and playback preferences.",
+      "locale": "Interface language",
+      "ui_mode": "Default view",
+      "ui_mode_simple": "Simple",
+      "ui_mode_advanced": "Advanced",
+      "default_profile": "Default profile",
+      "player_title": "Player",
+      "playback_rate": "Default speed",
+      "auto_scroll": "Enable auto-scroll by default",
+      "save": "Save preferences",
+      "saved": "Account preferences saved."
+    },
+    "system": {
+      "title": "System & hardware",
+      "description": "Global server parameters and VRAM management.",
+      "model_idle_unload_seconds": "Unload idle models after (seconds)",
+      "cpu_threads": "Global CPU threads (0 = auto)",
+      "devices_title": "Detected devices",
+      "vram_usage": "{free} MB free of {total} MB",
+      "unload_models": "Unload VRAM now",
+      "models_unloaded": "Unload command sent to all workers.",
+      "save": "Save system settings",
+      "saved": "System settings saved."
+    },
+    "auth": {
+      "title": "Sign in to AurisDeck",
+      "description": "Enter the shared password to continue.",
+      "password_label": "Password",
+      "password_placeholder": "Access password",
+      "login_button": "Sign in",
+      "logout_button": "Sign out",
+      "auth_mode_none": "Authentication disabled",
+      "auth_mode_password": "Protected by shared password"
+    }
+  },
+  "stages": {
+    "queued": "Queued",
+    "preprocessing": "Preparing audio",
+    "downloading_model": "Downloading model",
+    "loading_model": "Loading model",
+    "transcribing": "Transcribing",
+    "diarizing": "Diarizing speakers",
+    "merging": "Merging transcript",
+    "exporting": "Exporting files",
+    "completed": "Completed",
+    "completed_partial": "Completed partially (no diarization)",
+    "cancelling": "Cancelling",
+    "cancelled": "Cancelled",
+    "failed": "Failed"
+  },
+  "errors": {
+    "AUTH_REQUIRED": "You must sign in to access this resource.",
+    "AUTH_INVALID_TOKEN": "The authorization token is invalid or has expired.",
+    "AUTH_INVALID_CREDENTIALS": "The password you entered is incorrect.",
+    "AUTH_PASSWORD_NOT_CONFIGURED": "Password authentication is enabled, but no password is configured.",
+    "AUTH_USER_NOT_FOUND": "User account '{username}' was not found.",
+    "AUTH_ERROR": "Authentication failed.",
+    "FORBIDDEN": "You do not have permission to perform this action.",
+    "MEDIA_INVALID": "The media file is invalid or contains no processable audio.",
+    "ZIP_SLIP": "The ZIP archive contains unsafe paths and was rejected.",
+    "DIARIZATION_HF_TOKEN_MISSING": "An HF_TOKEN is required to run pyannote diarization.",
+    "DIARIZATION_GATED_TERMS": "You must accept the diarization model terms on Hugging Face.",
+    "DIARIZATION_DEPENDENCY_MISSING": "Optional diarization dependencies (pyannote.audio / torch) are missing.",
+    "DIARIZATION_INTERRUPTED": "Diarization was interrupted; the base transcript remains available.",
+    "GPU_OOM": "Out of video memory (VRAM) on the selected GPU.",
+    "MODEL_LOAD_FAILED": "Failed to load the requested model.",
+    "NO_COMPATIBLE_DEVICE": "No compatible GPU or CPU device is available for this job.",
+    "SERVER_INTERRUPTED": "The job was interrupted by a server restart.",
+    "JOB_NOT_FOUND": "Job '{job_id}' was not found.",
+    "JOB_CANCELLED": "The job was cancelled.",
+    "PROFILE_NOT_FOUND": "Profile '{profile_id}' was not found.",
+    "LOCALE_NOT_FOUND": "Locale '{code}' was not found.",
+    "INVALID_ARCHIVE": "The archive is corrupted or uses an unsupported format.",
+    "VALIDATION_ERROR": "The submitted data failed validation.",
+    "INTERNAL_ERROR": "An unexpected internal error occurred."
+  }
+}
