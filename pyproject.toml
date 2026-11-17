@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aurisdeck"
+version = "0.1.0"
+description = "Self-hosted, portable, multi-GPU audio/video transcription platform"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "python-multipart",
+    "click",
+    "rich",
+    "faster-whisper",
+]
+
+[project.optional-dependencies]
+diarization = [
+    "pyannote.audio",
+    "torch",
+    "torchaudio",
+]
+dev = [
+    "pytest",
+    "httpx",
+    "ruff",
+]
+
+[project.scripts]
+aurisdeck = "aurisdeck.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aurisdeck"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
