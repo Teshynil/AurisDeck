@@ -19,14 +19,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /opt/aurisdeck
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-RUN uv venv /opt/aurisdeck/.venv && \
-    if [ "$INSTALL_DIARIZATION" = "true" ]; then \
-        uv pip install --python /opt/aurisdeck/.venv/bin/python --no-cache ".[diarization]" nvidia-cublas-cu12 nvidia-cudnn-cu12; \
+RUN if [ "$INSTALL_DIARIZATION" = "true" ]; then \
+        uv sync --frozen --no-dev --extra diarization --no-cache; \
     else \
-        uv pip install --python /opt/aurisdeck/.venv/bin/python --no-cache . nvidia-cublas-cu12 nvidia-cudnn-cu12; \
+        uv sync --frozen --no-dev --no-cache; \
     fi
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh

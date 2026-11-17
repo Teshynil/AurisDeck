@@ -57,21 +57,13 @@ fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-VENV_DIR="${PROJECT_DIR}/.venv"
-
-if [ ! -d "${VENV_DIR}" ]; then
-    echo "Creating Python 3.12 virtual environment at ${VENV_DIR}..."
-    uv venv --python 3.12 "${VENV_DIR}"
-else
-    echo "Using existing virtual environment at ${VENV_DIR}..."
-fi
 
 if [ "${WITH_DIARIZATION}" = true ]; then
-    echo "Installing AurisDeck with optional diarization support (.[diarization])..."
-    uv pip install --python "${VENV_DIR}/bin/python" "${PROJECT_DIR}[diarization]"
+    echo "Installing AurisDeck with optional diarization support (--extra diarization)..."
+    uv sync --project "${PROJECT_DIR}" --python 3.12 --frozen --no-dev --extra diarization
 else
     echo "Installing AurisDeck base package..."
-    uv pip install --python "${VENV_DIR}/bin/python" "${PROJECT_DIR}"
+    uv sync --project "${PROJECT_DIR}" --python 3.12 --frozen --no-dev
 fi
 
 cat <<EOF
