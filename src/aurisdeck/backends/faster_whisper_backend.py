@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ctypes
 import gc
+import importlib.util
 import logging
 import os
+import sys
 import time
 import wave
 from collections.abc import Callable
@@ -31,6 +34,23 @@ def _is_oom_error(exc: BaseException) -> bool:
 def _to_ms(seconds: float) -> int:
     """Convert a timestamp in seconds to rounded integer milliseconds."""
     return round(float(seconds) * 1000)
+
+
+def _preload_cuda_libs() -> None:
+    """Preload pip-installed NVIDIA cuBLAS 12 shared libraries with RTLD_GLOBAL on Linux."""
+    if sys.platform != "linux":
+        return
+    spec = importlib.util.find_spec("nvidia.cublas")
+    if spec is None or not spec.submodule_search_locations:
+        return
+    lib_dir = Path(spec.submodule_search_locations[0]) / "lib"
+    for lib_name in ("libcublasLt.so.12", "libcublas.so.12"):
+        lib_path = lib_dir / lib_name
+        if lib_path.is_file():
+            try:
+                ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                pass
 
 
 def _load_audio_input(audio_path: Path) -> Any:
@@ -88,6 +108,8 @@ class FasterWhisperBackend:
             status_cb("loading_model")
 
         try:
+            if device != "cpu":
+                _preload_cuda_libs()
             from faster_whisper import WhisperModel
 
             self._model = WhisperModel(

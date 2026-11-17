@@ -17,6 +17,7 @@ dependencies = [
     "click",
     "rich",
     "faster-whisper",
+    "nvidia-cublas-cu12; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
