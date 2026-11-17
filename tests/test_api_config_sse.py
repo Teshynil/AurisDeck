@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -416,39 +415,35 @@ def test_events_endpoint_headers_keepalive_and_streaming(tmp_path: Path) -> None
             payload={"formats": ["vtt"]},
         )
 
-    with TestClient(app) as client:
-        timer = threading.Timer(0.12, _publish_after_keepalive)
-        timer.start()
-        try:
-            with client.stream("GET", "/api/v1/events") as resp:
-                assert resp.status_code == 200
-                assert resp.headers["content-type"].startswith("text/event-stream")
-                assert resp.headers.get("cache-control") == "no-cache"
-                assert resp.headers.get("x-accel-buffering") == "no"
+    with TestClient(app) as client, client.stream("GET", "/api/v1/events") as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        assert resp.headers.get("cache-control") == "no-cache"
+        assert resp.headers.get("x-accel-buffering") == "no"
 
-                seen_keepalive = False
-                event_lines: list[str] = []
-                for line in resp.iter_lines():
-                    if line == ": keepalive":
-                        seen_keepalive = True
-                        continue
-                    if not line:
-                        if len(event_lines) >= 3:
-                            break
-                        continue
-                    event_lines.append(line)
-                    if len(event_lines) >= 3:
-                        break
+        seen_keepalive = False
+        event_lines: list[str] = []
+        for line in resp.iter_lines():
+            if line == ": keepalive":
+                if not seen_keepalive:
+                    seen_keepalive = True
+                    _publish_after_keepalive()
+                continue
+            if not line:
+                if len(event_lines) >= 3:
+                    break
+                continue
+            event_lines.append(line)
+            if len(event_lines) >= 3:
+                break
 
-                assert seen_keepalive is True
-                assert event_lines[0] == "id: 1"
-                assert event_lines[1] == "event: job.completed"
-                assert event_lines[2].startswith("data: ")
-                payload = json.loads(event_lines[2].removeprefix("data: "))
-                assert payload["job_id"] == "job-xyz"
-                assert payload["payload"] == {"formats": ["vtt"]}
-        finally:
-            timer.cancel()
+        assert seen_keepalive is True
+        assert event_lines[0] == "id: 1"
+        assert event_lines[1] == "event: job.completed"
+        assert event_lines[2].startswith("data: ")
+        payload = json.loads(event_lines[2].removeprefix("data: "))
+        assert payload["job_id"] == "job-xyz"
+        assert payload["payload"] == {"formats": ["vtt"]}
 
 
 def test_events_endpoint_via_testclient_sync_stream(tmp_path: Path) -> None:
@@ -458,19 +453,18 @@ def test_events_endpoint_via_testclient_sync_stream(tmp_path: Path) -> None:
     def _publish_soon() -> None:
         app.state.event_bus.publish("device.status", payload={"device_id": "cuda:0"})
 
-    with TestClient(app) as client:
-        timer = threading.Timer(0.03, _publish_soon)
-        timer.start()
-        try:
-            with client.stream("GET", "/api/v1/events") as resp:
-                assert resp.status_code == 200
-                assert resp.headers.get("cache-control") == "no-cache"
-                assert resp.headers.get("x-accel-buffering") == "no"
-                seen_event = False
-                for line in resp.iter_lines():
-                    if line.startswith("event: device.status"):
-                        seen_event = True
-                        break
-                assert seen_event is True
-        finally:
-            timer.cancel()
+    with TestClient(app) as client, client.stream("GET", "/api/v1/events") as resp:
+        assert resp.status_code == 200
+        assert resp.headers.get("cache-control") == "no-cache"
+        assert resp.headers.get("x-accel-buffering") == "no"
+        seen_event = False
+        published = False
+        for line in resp.iter_lines():
+            if line == ": keepalive" and not published:
+                published = True
+                _publish_soon()
+                continue
+            if line.startswith("event: device.status"):
+                seen_event = True
+                break
+        assert seen_event is True
