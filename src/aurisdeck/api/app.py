@@ -377,6 +377,12 @@ def create_app(
 
     app.include_router(_build_core_router())
 
+    from aurisdeck.api.routes_config import router as config_router
+    from aurisdeck.api.routes_events import router as events_router
+
+    app.include_router(config_router)
+    app.include_router(events_router)
+
     if _STATIC_DIR.is_dir():
         app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
