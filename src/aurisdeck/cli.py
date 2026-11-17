@@ -933,7 +933,7 @@ def serve(host: str, port: int, data_dir: Path) -> None:
 
     settings = Settings(data_dir=data_dir)
     app = create_app(settings)
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, root_path=settings.base_path)
 
 
 @main.command()

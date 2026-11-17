@@ -354,9 +354,11 @@ def create_app(
     app = FastAPI(
         title="AurisDeck",
         version=__version__,
-        root_path=resolved_settings.base_path,
         lifespan=lifespan,
     )
+    # Assign root_path after instantiation to avoid FastAPIDeprecationWarning;
+    # runtime ASGI scope root_path is configured via uvicorn.run(root_path=...).
+    app.root_path = resolved_settings.base_path
 
     app.state.settings = resolved_settings
     app.state.paths = paths
