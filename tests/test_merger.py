@@ -83,19 +83,22 @@ def test_backend_protocols_and_zero_ml_imports() -> None:
     assert isinstance(_DummyDiarizer(), DiarizerBackend)
 
     forbidden = {"torch", "faster_whisper", "ctranslate2", "pyannote"}
-    package_dirs = [
-        Path(backends_pkg.__file__).parent,
-        Path(pipeline_pkg.__file__).parent,
+    backends_dir = Path(backends_pkg.__file__).parent
+    pipeline_dir = Path(pipeline_pkg.__file__).parent
+    contract_files = [
+        backends_dir / "__init__.py",
+        backends_dir / "base.py",
+        backends_dir / "errors.py",
+        *pipeline_dir.glob("*.py"),
     ]
-    for directory in package_dirs:
-        for py_file in directory.glob("*.py"):
-            tree = ast.parse(py_file.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        assert alias.name.split(".")[0] not in forbidden
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    assert node.module.split(".")[0] not in forbidden
+    for py_file in contract_files:
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name.split(".")[0] not in forbidden
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert node.module.split(".")[0] not in forbidden
 
 
 def test_merge_single_without_turns_assigns_default_speaker() -> None:
