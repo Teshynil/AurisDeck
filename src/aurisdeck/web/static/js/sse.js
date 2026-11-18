@@ -65,6 +65,7 @@ function clearDeviceJob(jobId) {
         return {
           ...dev,
           active_job_id: null,
+          track_id: null,
           stage: null,
           state: "idle",
           percent: 0,
@@ -137,15 +138,55 @@ function handleJobStage(envelope) {
   const jobId = envelope?.job_id;
   const payload = envelope?.payload || {};
   const nextStatus = payload.status || payload.stage;
-  upsertJob(jobId, {
-    ...(nextStatus ? { status: nextStatus } : {}),
-    stage: payload.stage || nextStatus || null,
-    device_id: payload.device_id ?? null,
-    updated_at: envelope.ts,
+  const trackId = payload.track_id ?? null;
+
+  store.setState((current) => {
+    const list = Array.isArray(current.jobs) ? current.jobs : [];
+    const idx = list.findIndex((item) => item.id === jobId);
+    if (idx === -1) {
+      return {
+        jobs: [
+          {
+            id: jobId,
+            ...(nextStatus ? { status: nextStatus } : {}),
+            stage: payload.stage || nextStatus || null,
+            device_id: payload.device_id ?? null,
+            updated_at: envelope.ts,
+          },
+          ...list,
+        ],
+      };
+    }
+    const existing = list[idx];
+    const nextTrackProgress = { ...(existing.track_progress || {}) };
+    if (trackId) {
+      const prevTrack = nextTrackProgress[trackId] || {};
+      const stageValue = payload.stage || nextStatus || prevTrack.stage || null;
+      nextTrackProgress[trackId] = {
+        ...prevTrack,
+        track_id: trackId,
+        device_id: payload.device_id ?? prevTrack.device_id ?? null,
+        stage: stageValue,
+        ...(stageValue === "completed" ? { percent: 100 } : {}),
+        updated_at: envelope.ts,
+      };
+    }
+    const next = list.slice();
+    next[idx] = {
+      ...existing,
+      ...(nextStatus ? { status: nextStatus } : {}),
+      stage: payload.stage || nextStatus || null,
+      device_id: payload.device_id ?? null,
+      track_progress: nextTrackProgress,
+      updated_at: envelope.ts,
+    };
+    return { jobs: next };
   });
+
   if (payload.device_id) {
     updateDevice(payload.device_id, {
       active_job_id: jobId,
+      ...(trackId ? { track_id: trackId } : {}),
       stage: payload.stage || nextStatus || null,
       state: "busy",
     });
@@ -158,23 +199,75 @@ function handleJobProgress(envelope) {
   const processed = Number(payload.processed_ms || 0);
   const total = Number(payload.total_ms || 0);
   const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const trackId = payload.track_id ?? null;
+  const trackKey = trackId || "default";
 
-  upsertJob(jobId, {
-    progress: {
+  store.setState((current) => {
+    const list = Array.isArray(current.jobs) ? current.jobs : [];
+    const idx = list.findIndex((item) => item.id === jobId);
+    const trackEntry = {
       device_id: payload.device_id ?? null,
-      track_id: payload.track_id ?? null,
+      track_id: trackId,
       processed_ms: processed,
       total_ms: total,
       rtfx: payload.rtfx ?? null,
       percent,
-    },
-    updated_at: envelope.ts,
+      stage: percent >= 100 ? "completed" : "transcribing",
+      updated_at: envelope.ts,
+    };
+
+    if (idx === -1) {
+      return {
+        jobs: [
+          {
+            id: jobId,
+            progress: trackEntry,
+            track_progress: { [trackKey]: trackEntry },
+            updated_at: envelope.ts,
+          },
+          ...list,
+        ],
+      };
+    }
+
+    const existing = list[idx];
+    const nextTrackProgress = {
+      ...(existing.track_progress || {}),
+      [trackKey]: { ...(existing.track_progress?.[trackKey] || {}), ...trackEntry },
+    };
+
+    const tracks = Array.isArray(existing.tracks) ? existing.tracks : [];
+    let globalPercent = percent;
+    if (tracks.length > 1) {
+      const sum = tracks.reduce((acc, t) => {
+        const tp = nextTrackProgress[t.id];
+        if (tp && typeof tp.percent === "number") {
+          return acc + tp.percent;
+        }
+        return acc + (t.status === "completed" ? 100 : 0);
+      }, 0);
+      globalPercent = Math.round(sum / tracks.length);
+    }
+
+    const next = list.slice();
+    next[idx] = {
+      ...existing,
+      track_progress: nextTrackProgress,
+      progress: {
+        ...trackEntry,
+        percent: globalPercent,
+      },
+      updated_at: envelope.ts,
+    };
+    return { jobs: next };
   });
 
   if (payload.device_id) {
     updateDevice(payload.device_id, {
       active_job_id: jobId,
+      track_id: trackId,
       state: "busy",
+      stage: "transcribing",
       processed_ms: processed,
       total_ms: total,
       rtfx: payload.rtfx ?? null,
@@ -196,6 +289,7 @@ function handleJobCompleted(envelope) {
     error_params: payload.error_params ?? null,
     error_detail: payload.detail ?? null,
     completed_at: envelope.ts,
+    finished_at_ms: Date.now(),
     updated_at: envelope.ts,
     progress: null,
   });
@@ -226,6 +320,7 @@ function handleJobError(envelope) {
     error_code: payload.error_code || "INTERNAL_ERROR",
     error_params: payload.error_params || {},
     error_detail: payload.detail || "",
+    finished_at_ms: Date.now(),
     updated_at: envelope.ts,
     progress: null,
   });
@@ -243,6 +338,7 @@ function handleJobCancelled(envelope) {
   const jobId = envelope?.job_id;
   upsertJob(jobId, {
     status: "cancelled",
+    finished_at_ms: Date.now(),
     updated_at: envelope.ts,
     progress: null,
   });
