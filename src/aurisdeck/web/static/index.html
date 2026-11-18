@@ -67,6 +67,7 @@
         </div>
       </section>
 
+      <section id="view-setup" class="view-section hidden" data-view="setup"></section>
       <section id="view-library" class="view-section hidden" data-view="library"></section>
       <section id="view-viewer" class="view-section hidden" data-view="viewer"></section>
       <section id="view-profiles" class="view-section hidden" data-view="profiles"></section>
@@ -81,7 +82,18 @@
       </div>
       <form id="login-form">
         <div class="modal-body">
-          <p class="muted" style="margin: 0;" data-i18n="settings.auth.description">Introduce la contraseña compartida para continuar.</p>
+          <p class="muted" style="margin: 0;" data-i18n="settings.auth.description">Introduce tus credenciales para continuar.</p>
+          <div class="form-group">
+            <label class="label" for="login-username" data-i18n="settings.auth.username_label">Usuario</label>
+            <input
+              id="login-username"
+              class="input"
+              type="text"
+              autocomplete="username"
+              data-i18n-placeholder="settings.auth.username_placeholder"
+              placeholder="admin"
+            >
+          </div>
           <div class="form-group">
             <label class="label" for="login-password" data-i18n="settings.auth.password_label">Contraseña</label>
             <input

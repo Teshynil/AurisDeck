@@ -40,6 +40,8 @@
     "error": "Error",
     "success": "Done",
     "optional": "Optional",
+    "show": "Show",
+    "hide": "Hide",
     "items_count": {
       "one": "{count} item",
       "other": "{count} items"
@@ -220,13 +222,66 @@
     },
     "auth": {
       "title": "Sign in to AurisDeck",
-      "description": "Enter the shared password to continue.",
+      "description": "Enter your credentials to continue.",
+      "username_label": "Username",
+      "username_placeholder": "admin",
       "password_label": "Password",
       "password_placeholder": "Access password",
       "login_button": "Sign in",
       "logout_button": "Sign out",
       "auth_mode_none": "Authentication disabled",
-      "auth_mode_password": "Protected by shared password"
+      "auth_mode_password": "Protected by password"
+    }
+  },
+  "hf_token": {
+    "verify_btn": "Verify token",
+    "clear_btn": "Remove",
+    "cleared": "HF_TOKEN removed from database.",
+    "status_configured": "Configured in DB",
+    "status_unverified": "Not verified",
+    "status_valid": "Valid token",
+    "status_missing": "Enter a token",
+    "status_invalid": "Invalid token",
+    "status_gated": "Terms not accepted",
+    "status_network_error": "Connection error",
+    "tutorial_title": "How to get and enable the token?",
+    "tutorial_step_1_prefix": "Sign in or create an account on ",
+    "tutorial_step_1_suffix": ".",
+    "tutorial_step_2_prefix": "Accept the license terms for ",
+    "tutorial_step_3_prefix": "Also accept the terms for ",
+    "tutorial_step_4_prefix": "Create a ",
+    "tutorial_step_4_mid": " token in ",
+    "tutorial_step_5_prefix": "Paste it above (starts with ",
+    "tutorial_step_5_mid": ") and click "
+  },
+  "setup": {
+    "title": "Initial Setup",
+    "optional": "Optional",
+    "step_lang": "Language",
+    "step_admin": "Administrator",
+    "step_hf": "Diarization",
+    "step_finish": "Finish",
+    "lang_title": "Select language",
+    "lang_desc": "Choose the default interface language.",
+    "admin_title": "Administrator account",
+    "admin_desc": "Create the main user to manage the system.",
+    "username": "Username",
+    "password": "Password",
+    "confirm_password": "Confirm password",
+    "hf_title": "Hugging Face Token",
+    "hf_desc": "Required to download speaker diarization models.",
+    "finish_title": "Setup summary",
+    "finish_desc": "Confirm your settings to complete the initial setup.",
+    "hf_configured": "Configured",
+    "hf_skipped": "Not configured",
+    "prev": "Back",
+    "skip": "Skip",
+    "next": "Next",
+    "finish": "Finish",
+    "errors": {
+      "invalid_username": "Username cannot be empty or contain spaces.",
+      "password_short": "Password must be at least 6 characters.",
+      "password_mismatch": "Passwords do not match."
     }
   },
   "stages": {
@@ -268,7 +323,7 @@
     "LOCALE_NOT_FOUND": "Locale '{code}' was not found.",
     "INVALID_ARCHIVE": "The archive is corrupted or uses an unsupported format.",
     "FOLDER_NOT_ALLOWED": "Folders cannot be uploaded. Drag or select individual files.",
-    "UNSUPPORTED_FILES": "Unsupported file(s): {files}. Use supported audio, video, or ZIP files.",
+    "UNSUPPORTED_FILES": "Unsupported file(s) or no compatible media: {files}.",
     "FOLDER_AND_UNSUPPORTED_FILES": "Folders and unsupported files are not allowed ({files}).",
     "VALIDATION_ERROR": "The submitted data failed validation.",
     "INTERNAL_ERROR": "An unexpected internal error occurred."

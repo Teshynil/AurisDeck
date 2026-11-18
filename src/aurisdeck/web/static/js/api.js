@@ -207,9 +207,21 @@ export async function request(path, options = {}) {
 }
 
 export const authStatus = () => request("/api/v1/auth/status");
-export const login = (password) =>
-  request("/api/v1/auth/login", { method: "POST", body: { password: String(password ?? "") } });
+export const login = (password, username = null) =>
+  request("/api/v1/auth/login", {
+    method: "POST",
+    body: {
+      ...(username ? { username: String(username) } : {}),
+      password: String(password ?? ""),
+    },
+  });
 export const logout = () => request("/api/v1/auth/logout", { method: "POST" });
+
+export const setupStatus = () => request("/api/v1/setup/status");
+export const setupVerifyHfToken = (token) =>
+  request("/api/v1/setup/verify-hf-token", { method: "POST", body: { token: token ?? null } });
+export const setupComplete = (payload) =>
+  request("/api/v1/setup/complete", { method: "POST", body: payload });
 
 export const getMe = () => request("/api/v1/me");
 export const patchMe = (patch) =>
@@ -251,6 +263,11 @@ export const getDevices = () => request("/api/v1/system/devices");
 export const getAdminSettings = () => request("/api/v1/admin/settings");
 export const patchAdminSettings = (patch) =>
   request("/api/v1/admin/settings", { method: "PATCH", body: patch });
+export const adminVerifyHfToken = (token = null) =>
+  request("/api/v1/admin/settings/verify-hf-token", {
+    method: "POST",
+    body: { token: token ?? null },
+  });
 export const unloadModels = () =>
   request("/api/v1/system/unload-models", { method: "POST" });
 
@@ -308,6 +325,9 @@ export const api = {
   authStatus,
   login,
   logout,
+  setupStatus,
+  setupVerifyHfToken,
+  setupComplete,
   getMe,
   patchMe,
   getLocales,
@@ -329,6 +349,7 @@ export const api = {
   getDevices,
   getAdminSettings,
   patchAdminSettings,
+  adminVerifyHfToken,
   unloadModels,
   listJobs,
   getJob,

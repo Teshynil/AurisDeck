@@ -40,6 +40,8 @@
     "error": "Error",
     "success": "Completado",
     "optional": "Opcional",
+    "show": "Mostrar",
+    "hide": "Ocultar",
     "items_count": {
       "one": "{count} elemento",
       "other": "{count} elementos"
@@ -220,13 +222,66 @@
     },
     "auth": {
       "title": "Acceso a AurisDeck",
-      "description": "Introduce la contraseña compartida para continuar.",
+      "description": "Introduce tus credenciales para continuar.",
+      "username_label": "Usuario",
+      "username_placeholder": "admin",
       "password_label": "Contraseña",
       "password_placeholder": "Contraseña de acceso",
       "login_button": "Entrar",
       "logout_button": "Cerrar sesión",
       "auth_mode_none": "Autenticación desactivada",
-      "auth_mode_password": "Protegido con contraseña compartida"
+      "auth_mode_password": "Protegido con contraseña"
+    }
+  },
+  "hf_token": {
+    "verify_btn": "Verificar token",
+    "clear_btn": "Eliminar",
+    "cleared": "Token HF_TOKEN eliminado de la base de datos.",
+    "status_configured": "Configurado en BD",
+    "status_unverified": "Sin verificar",
+    "status_valid": "Token válido",
+    "status_missing": "Introduce un token",
+    "status_invalid": "Token inválido",
+    "status_gated": "Falta aceptar términos",
+    "status_network_error": "Error de conexión",
+    "tutorial_title": "¿Cómo obtener y habilitar el token?",
+    "tutorial_step_1_prefix": "Inicia sesión o crea una cuenta en ",
+    "tutorial_step_1_suffix": ".",
+    "tutorial_step_2_prefix": "Acepta las condiciones de uso de ",
+    "tutorial_step_3_prefix": "Acepta también las condiciones de ",
+    "tutorial_step_4_prefix": "Crea un token de tipo ",
+    "tutorial_step_4_mid": " en ",
+    "tutorial_step_5_prefix": "Pégalo arriba (empieza por ",
+    "tutorial_step_5_mid": ") y pulsa "
+  },
+  "setup": {
+    "title": "Configuración inicial",
+    "optional": "Opcional",
+    "step_lang": "Idioma",
+    "step_admin": "Administrador",
+    "step_hf": "Diarización",
+    "step_finish": "Finalizar",
+    "lang_title": "Selecciona el idioma",
+    "lang_desc": "Elige el idioma predeterminado de la interfaz.",
+    "admin_title": "Cuenta de administrador",
+    "admin_desc": "Crea el usuario principal para administrar el sistema.",
+    "username": "Usuario",
+    "password": "Contraseña",
+    "confirm_password": "Confirmar contraseña",
+    "hf_title": "Token de Hugging Face",
+    "hf_desc": "Necesario para descargar los modelos de diarización de hablantes.",
+    "finish_title": "Resumen de instalación",
+    "finish_desc": "Confirma los datos para completar la configuración inicial.",
+    "hf_configured": "Configurado",
+    "hf_skipped": "No configurado",
+    "prev": "Anterior",
+    "skip": "Omitir",
+    "next": "Siguiente",
+    "finish": "Finalizar",
+    "errors": {
+      "invalid_username": "El usuario no puede estar vacío ni contener espacios.",
+      "password_short": "La contraseña debe tener al menos 6 caracteres.",
+      "password_mismatch": "Las contraseñas no coinciden."
     }
   },
   "stages": {
@@ -268,7 +323,7 @@
     "LOCALE_NOT_FOUND": "No se encontró el idioma '{code}'.",
     "INVALID_ARCHIVE": "El archivo comprimido está dañado o no tiene un formato soportado.",
     "FOLDER_NOT_ALLOWED": "No se pueden subir carpetas. Arrastra o selecciona archivos individuales.",
-    "UNSUPPORTED_FILES": "Archivo(s) no soportado(s): {files}. Usa audio, video o ZIP compatibles.",
+    "UNSUPPORTED_FILES": "Archivo(s) no soportado(s) o sin medios compatibles: {files}.",
     "FOLDER_AND_UNSUPPORTED_FILES": "No se permiten carpetas ni archivos no soportados ({files}).",
     "VALIDATION_ERROR": "Los datos enviados no superaron la validación.",
     "INTERNAL_ERROR": "Se produjo un error interno inesperado."

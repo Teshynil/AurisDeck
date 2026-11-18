@@ -4,6 +4,7 @@
  */
 
 import { api } from "../api.js";
+import { buildHfTokenPanel } from "../components/hf_token_panel.js";
 import { i18n, t, translateError } from "../i18n.js";
 import { store } from "../store.js";
 
@@ -98,6 +99,10 @@ export function mount(container) {
     system: {
       model_idle_unload_seconds: 300,
       cpu_threads: 0,
+      hf_token_configured: false,
+      hf_token_masked: null,
+      hfTokenInput: "",
+      clearHfToken: false,
     },
     systemLoaded: false,
     loadingSystem: false,
@@ -145,6 +150,10 @@ export function mount(container) {
         local.system = {
           model_idle_unload_seconds: Number(settingsPayload.model_idle_unload_seconds ?? 300),
           cpu_threads: Number(settingsPayload.cpu_threads ?? 0),
+          hf_token_configured: Boolean(settingsPayload.hf_token_configured),
+          hf_token_masked: settingsPayload.hf_token_masked ?? null,
+          hfTokenInput: "",
+          clearHfToken: false,
         };
         local.systemLoaded = true;
       }
@@ -275,6 +284,12 @@ export function mount(container) {
       ),
       cpu_threads: Math.max(0, Number.parseInt(local.system.cpu_threads, 10) || 0),
     };
+    const trimmedToken = local.system.hfTokenInput.trim();
+    if (trimmedToken) {
+      payload.hf_token = trimmedToken;
+    } else if (local.system.clearHfToken) {
+      payload.hf_token = null;
+    }
 
     try {
       const updated = await api.patchAdminSettings(payload);
@@ -282,6 +297,10 @@ export function mount(container) {
         local.system = {
           model_idle_unload_seconds: Number(updated.model_idle_unload_seconds ?? payload.model_idle_unload_seconds),
           cpu_threads: Number(updated.cpu_threads ?? payload.cpu_threads),
+          hf_token_configured: Boolean(updated.hf_token_configured),
+          hf_token_masked: updated.hf_token_masked ?? null,
+          hfTokenInput: "",
+          clearHfToken: false,
         };
       }
       store.addToast({ type: "success", message: t("settings.system.saved") });
@@ -558,7 +577,30 @@ export function mount(container) {
               },
             })
           )
-        )
+        ),
+        buildHfTokenPanel({
+          inputId: "settings-system-hf-token",
+          value: local.system.hfTokenInput,
+          configured: local.system.hf_token_configured,
+          maskedToken: local.system.hf_token_masked,
+          onInput: (val) => {
+            local.system.hfTokenInput = val;
+            if (val.trim()) {
+              local.system.clearHfToken = false;
+            }
+          },
+          onVerify: (token) => api.adminVerifyHfToken(token),
+          onClear: async () => {
+            local.system.hfTokenInput = "";
+            local.system.clearHfToken = true;
+            const updated = await api.patchAdminSettings({ hf_token: null });
+            local.system.hf_token_configured = Boolean(updated?.hf_token_configured);
+            local.system.hf_token_masked = updated?.hf_token_masked ?? null;
+            local.system.clearHfToken = false;
+            store.addToast({ type: "info", message: t("hf_token.cleared") });
+            render();
+          },
+        })
       ),
       el(
         "div",

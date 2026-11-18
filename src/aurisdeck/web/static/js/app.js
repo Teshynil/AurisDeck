@@ -380,9 +380,11 @@ function bindShellEvents() {
   const loginForm = document.getElementById("login-form");
   loginForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const usernameEl = document.getElementById("login-username");
     const passwordEl = document.getElementById("login-password");
     const submitEl = document.getElementById("login-submit");
     const errorEl = document.getElementById("login-error");
+    const username = usernameEl ? usernameEl.value.trim() : "";
     const password = passwordEl ? passwordEl.value : "";
 
     if (submitEl) {
@@ -394,7 +396,7 @@ function bindShellEvents() {
     }
 
     try {
-      await api.login(password);
+      await api.login(password, username || null);
       hideLoginModal();
       const nextStatus = { auth_mode: "password", authenticated: true };
       store.setState({ authStatus: nextStatus });
@@ -480,12 +482,47 @@ async function boot() {
   bindShellEvents();
 
   try {
-    await i18n.loadLocales().catch(() => []);
+    const locales = await i18n.loadLocales().catch(() => []);
     const status = await api.authStatus();
     store.setState({ authStatus: status });
     updateLogoutButton(status);
 
-    if (status?.auth_mode === "password" && !status?.authenticated) {
+    if (status?.setup_required) {
+      const bootLocale = resolveBootLocaleFallback();
+      await i18n.load(bootLocale).catch(() => null);
+      i18n.applyStaticTranslations(document);
+
+      const navEl = document.getElementById("main-nav");
+      const badgeEl = document.getElementById("header-devices-badge");
+      const setupSection = document.getElementById("view-setup");
+      const transcribeSection = document.getElementById("view-transcribe");
+
+      navEl?.classList.add("hidden");
+      badgeEl?.classList.add("hidden");
+      transcribeSection?.classList.add("hidden");
+      setupSection?.classList.remove("hidden");
+
+      const { mountSetupWizard } = await import("./views/setup_wizard.js");
+      await new Promise((resolve) => {
+        mountSetupWizard(setupSection, {
+          locales,
+          initialLocale: bootLocale,
+          onCompleted: async () => {
+            setupSection?.classList.add("hidden");
+            navEl?.classList.remove("hidden");
+            badgeEl?.classList.remove("hidden");
+            const refreshed = await api.authStatus().catch(() => ({
+              auth_mode: "password",
+              authenticated: true,
+              setup_required: false,
+            }));
+            store.setState({ authStatus: refreshed });
+            updateLogoutButton(refreshed);
+            resolve();
+          },
+        });
+      });
+    } else if (status?.auth_mode === "password" && !status?.authenticated) {
       await i18n.load(resolveBootLocaleFallback()).catch(() => null);
       i18n.applyStaticTranslations(document);
       showLoginModal();

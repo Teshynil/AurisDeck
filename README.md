@@ -44,12 +44,6 @@ Requires Docker with the NVIDIA Container Toolkit installed on the host:
 docker compose up -d --build
 ```
 
-To include optional speaker diarization dependencies (`pyannote.audio`, `torch`, `torchaudio`) inside the image, pass `INSTALL_DIARIZATION=true`:
-
-```bash
-INSTALL_DIARIZATION=true docker compose up -d --build
-```
-
 ### 3. Start in CPU-only mode (`docker-compose.cpu.yml`)
 
 For hosts without an NVIDIA GPU:
@@ -75,16 +69,10 @@ The installer automatically provisions Python 3.12 into an isolated `.venv` usin
 
 ### Install
 
-Base installation (ASR + Web UI + CLI):
+Install AurisDeck (ASR, speaker diarization runtime, Web UI, and CLI):
 
 ```bash
 ./scripts/install.sh
-```
-
-With optional speaker diarization dependencies (`pyannote.audio`, `torch`, `torchaudio`):
-
-```bash
-./scripts/install.sh --with-diarization
 ```
 
 ### Run
@@ -155,19 +143,15 @@ Jobs can export to `.vtt` (W3C WebVTT), `.srt`, `.md`, and `.json`. WebVTT and S
 
 ---
 
-## Optional Speaker Diarization (`HF_TOKEN`)
+## Speaker Diarization (`HF_TOKEN`)
 
-Speaker diarization for `single` mode uses `pyannote/speaker-diarization-3.1`.
+Speaker diarization for `single` mode uses `pyannote/speaker-diarization-3.1`. Base diarization dependencies are installed by default and model weights are downloaded on demand.
 
-1. Install diarization dependencies (`./scripts/install.sh --with-diarization` or `INSTALL_DIARIZATION=true` in Docker).
-2. Accept the model conditions on Hugging Face for:
+1. Accept the model conditions on Hugging Face for:
    - `pyannote/speaker-diarization-3.1`
    - `pyannote/segmentation-3.0`
-3. Set `HF_TOKEN` in `.env` or your shell environment before starting AurisDeck:
-
-```bash
-export HF_TOKEN=hf_your_token_here
-```
+2. Create a **Read-Only** token in Hugging Face (`Settings → Access Tokens`).
+3. Configure `HF_TOKEN` in the **Initial Setup Wizard** or later in **Settings → System & hardware** (admin-only). The token is stored in the SQLite database; environment variables are not used.
 
 If ASR succeeds but diarization cannot run (for example due to a missing or unauthorized `HF_TOKEN`), AurisDeck saves the job as `completed_partial` with all ASR checkpoints and downloadable transcripts intact. Once `HF_TOKEN` is configured, you can trigger diarization later (`POST /api/v1/jobs/{id}/diarize` or **Diarize now** in the viewer) without re-running ASR.
 
@@ -279,12 +263,10 @@ aurisdeck pull-model large-v3-turbo --data-dir ./data
 | `AURISDECK_BASE_PATH` | `""` | Optional URL subpath when served behind a reverse proxy (e.g., `/aurisdeck`). |
 | `AURISDECK_MODEL_IDLE_UNLOAD_SECONDS` | `120` | Seconds of worker inactivity before unloading ASR/diarization models from VRAM/RAM (`0` disables auto-unload). |
 | `AURISDECK_CPU_THREADS` | `0` | Global CPU thread count for CTranslate2 (`0` = automatic). |
-| `HF_TOKEN` | unset | Hugging Face Hub token (required only for gated `pyannote` diarization models). |
 | `HF_ENDPOINT` | unset | Custom Hugging Face Hub URL or mirror. |
 | `HF_HOME` | `/data/models` in Docker | Hugging Face model cache directory. |
 | `PUID` / `PGID` | `1000` / `1000` | Host UID/GID applied inside Docker to `/data` via the container entrypoint. |
 | `AURISDECK_PORT` | `8080` | Host TCP port published by Docker Compose. |
-| `INSTALL_DIARIZATION` | `false` | Docker build argument (`true` installs `.[diarization]`). |
 | `AURISDECK_SERVER_URL` | unset | Default server URL for `aurisdeck transcribe --server`. |
 | `AURISDECK_TOKEN` | unset | Default Bearer API token for `aurisdeck transcribe --server`. |
 
