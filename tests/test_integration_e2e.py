@@ -257,11 +257,15 @@ def _build_e2e_app(
     settings = Settings(
         data_dir=data_dir,
         auth_mode="none",
-        hf_token=hf_token,
         model_idle_unload_seconds=60,
     )
     devices = [DeviceInfo(id="cpu", kind="cpu", index=None, name="CPU (4 threads)")]
     app = create_app(settings, devices=devices)
+    if hf_token is not None:
+        from aurisdeck.db.migrations import run_migrations
+
+        run_migrations(app.state.paths.db_path)
+        app.state.system_settings_repo.set_hf_token(hf_token)
     app.state.coordinator._backend_factory = FakeBackendFactory(
         log_file=log_file,
         require_hf_token=require_hf_token,
@@ -535,8 +539,8 @@ def test_e2e_diarization_failure_partial_then_post_hoc_diarize_completes(
         assert "WEBVTT" in partial_vtt.text
         assert "Hola mundo" in partial_vtt.text
 
-        # Configure HF_TOKEN and trigger post-hoc diarization without re-running ASR.
-        app.state.settings.hf_token = "hf_test_valid_token"
+        # Configure HF_TOKEN in DB and trigger post-hoc diarization without re-running ASR.
+        app.state.system_settings_repo.set_hf_token("hf_test_valid_token")
         diarize_resp = client.post(
             f"/api/v1/jobs/{job_id}/diarize",
             json={"min_speakers": 2, "max_speakers": 2},

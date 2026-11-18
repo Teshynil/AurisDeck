@@ -39,7 +39,7 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.model_idle_unload_seconds == 120
     assert settings.cpu_threads == 0
     assert settings.hf_endpoint is None
-    assert settings.hf_token is None
+    assert not hasattr(settings, "hf_token")
 
 
 def test_settings_defaults_and_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -60,7 +60,7 @@ def test_settings_defaults_and_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert settings.model_idle_unload_seconds == 45
     assert settings.cpu_threads == 4
     assert settings.hf_endpoint == "https://hf-mirror.example"
-    assert settings.hf_token == "hf_test_token"
+    assert not hasattr(settings, "hf_token")
 
 
 @pytest.mark.parametrize(

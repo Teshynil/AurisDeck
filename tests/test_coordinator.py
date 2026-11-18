@@ -516,7 +516,7 @@ def test_diarization_failure_partial_then_trigger_diarize_without_rerunning_asr(
         _fake_extract_wav_16k,
     )
     settings, paths, job_repo, segment_repo, event_bus = _setup_env(tmp_path)
-    settings.hf_token = None
+    token_holder: dict[str, str | None] = {"token": None}
     log_file = tmp_path / "partial_diarize.jsonl"
 
     devices = [DeviceInfo(id="cpu", kind="cpu", index=None, name="CPU")]
@@ -551,6 +551,7 @@ def test_diarization_failure_partial_then_trigger_diarize_without_rerunning_asr(
         event_bus=event_bus,
         devices=devices,
         backend_factory=FakeBackendFactory(log_file=log_file, require_hf_token=True),
+        hf_token_provider=lambda: token_holder["token"],
     )
     coord.start()
     try:
@@ -569,7 +570,7 @@ def test_diarization_failure_partial_then_trigger_diarize_without_rerunning_asr(
         assert not paths.job_tmp_dir(job.id).exists()
 
         # Now configure HF_TOKEN and trigger diarization post-hoc.
-        settings.hf_token = "hf_test_valid_token"
+        token_holder["token"] = "hf_test_valid_token"
         coord.trigger_diarize(job.id)
         completed = _wait_for_status(job_repo, job.id, {"completed", "completed_partial", "failed"})
         assert completed.status == "completed"

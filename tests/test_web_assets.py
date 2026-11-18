@@ -68,7 +68,11 @@ def test_root_serves_index_html_and_static_assets_offline(tmp_path: Path) -> Non
 
         auth_resp = client.get("/api/v1/auth/status")
         assert auth_resp.status_code == 200
-        assert auth_resp.json() == {"auth_mode": "none", "authenticated": True}
+        assert auth_resp.json() == {
+            "auth_mode": "none",
+            "authenticated": True,
+            "setup_required": True,
+        }
 
         locales_resp = client.get("/api/v1/locales")
         assert locales_resp.status_code == 200

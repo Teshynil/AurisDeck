@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from aurisdeck.config import Settings
-from aurisdeck.db.repositories import UserRecord, UserRepo
+from aurisdeck.db.repositories import SystemSettingsRepo, UserRecord, UserRepo
 
 DEFAULT_SESSION_TTL_SECONDS = 86400 * 14
 
@@ -262,15 +262,26 @@ class AuthService:
         user_repo: UserRepo,
         settings: Settings,
         secret_key_path: Path | None = None,
+        system_settings_repo: SystemSettingsRepo | None = None,
     ) -> None:
         self._user_repo = user_repo
         self._settings = settings
+        self._system_settings_repo = system_settings_repo
         self._secret_key_path = (
             Path(secret_key_path)
             if secret_key_path is not None
             else settings.data_dir / ".session_secret"
         )
         self._secret_key = _load_or_create_secret(self._secret_key_path)
+
+    @property
+    def effective_auth_mode(self) -> str:
+        """Return active auth mode, honoring DB password mode once initial setup completes."""
+        if self._system_settings_repo is not None:
+            db_mode = self._system_settings_repo.get_auth_mode()
+            if db_mode == "password":
+                return "password"
+        return self._settings.auth_mode
 
     @property
     def secret_key(self) -> str:
@@ -306,8 +317,8 @@ class AuthService:
                 raise AuthInvalidTokenError("Invalid bearer token")
             return _user_to_dict(user)
 
-        if self._settings.auth_mode == "none":
-            default_user = self._user_repo.get_by_username("default")
+        if self.effective_auth_mode == "none":
+            default_user = self._user_repo.get_by_id("default") or self._user_repo.get_by_username("default")
             if default_user is None:
                 raise AuthUserNotFoundError(
                     "Default user not found",
@@ -326,7 +337,7 @@ class AuthService:
 
     def verify_shared_password(self, plain: str) -> bool:
         """Verify the shared login password against DB hash first, then env fallback."""
-        user = self._user_repo.get_by_username("default")
+        user = self._user_repo.get_by_id("default") or self._user_repo.get_by_username("default")
         if user is None:
             raise AuthUserNotFoundError(
                 "Default user not found",
@@ -342,6 +353,21 @@ class AuthService:
                 "Password authentication is enabled but no password is configured"
             )
         return hmac.compare_digest(plain.encode("utf-8"), configured.encode("utf-8"))
+
+    def verify_credentials(self, username: str | None, plain: str) -> UserRecord | None:
+        """Verify username+password or fallback to shared password when username is omitted."""
+        cleaned = username.strip() if username else ""
+        if cleaned:
+            user = self._user_repo.get_by_username(cleaned)
+            if user is None or not user.password_hash:
+                return None
+            if verify_secret(plain, user.password_hash):
+                return user
+            return None
+
+        if self.verify_shared_password(plain):
+            return self._user_repo.get_by_id("default") or self._user_repo.get_by_username("default")
+        return None
 
     def reset_password(self, new_password: str, username: str = "default") -> None:
         """Hash and store a new password for the target user account."""

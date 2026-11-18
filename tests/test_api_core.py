@@ -198,7 +198,11 @@ def test_healthz_locales_and_me_in_none_auth_mode(tmp_path: Path) -> None:
 
         status_resp = client.get("/api/v1/auth/status")
         assert status_resp.status_code == 200
-        assert status_resp.json() == {"auth_mode": "none", "authenticated": True}
+        assert status_resp.json() == {
+            "auth_mode": "none",
+            "authenticated": True,
+            "setup_required": True,
+        }
 
         locales_resp = client.get("/api/v1/locales")
         assert locales_resp.status_code == 200
@@ -269,7 +273,11 @@ def test_password_auth_cookie_not_secure_on_http_and_protects_endpoints(tmp_path
         # Unauthenticated status
         status_before = client.get("/api/v1/auth/status")
         assert status_before.status_code == 200
-        assert status_before.json() == {"auth_mode": "password", "authenticated": False}
+        assert status_before.json() == {
+            "auth_mode": "password",
+            "authenticated": False,
+            "setup_required": True,
+        }
 
         # Public routes stay accessible
         assert client.get("/healthz").status_code == 200
@@ -302,7 +310,11 @@ def test_password_auth_cookie_not_secure_on_http_and_protects_endpoints(tmp_path
         # Authenticated session works
         status_after = client.get("/api/v1/auth/status")
         assert status_after.status_code == 200
-        assert status_after.json() == {"auth_mode": "password", "authenticated": True}
+        assert status_after.json() == {
+            "auth_mode": "password",
+            "authenticated": True,
+            "setup_required": True,
+        }
 
         me_auth = client.get("/api/v1/me")
         assert me_auth.status_code == 200
@@ -355,6 +367,8 @@ def test_bearer_token_and_admin_endpoints_and_persistence(tmp_path: Path) -> Non
             "model_idle_unload_seconds": 120,
             "cpu_threads": 0,
             "log_level": "INFO",
+            "hf_token_configured": False,
+            "hf_token_masked": None,
         }
 
         admin_patch = client.patch(
@@ -367,6 +381,8 @@ def test_bearer_token_and_admin_endpoints_and_persistence(tmp_path: Path) -> Non
             "model_idle_unload_seconds": 300,
             "cpu_threads": 6,
             "log_level": "DEBUG",
+            "hf_token_configured": False,
+            "hf_token_masked": None,
         }
         assert settings.model_idle_unload_seconds == 300
         assert settings.cpu_threads == 6
@@ -393,6 +409,8 @@ def test_bearer_token_and_admin_endpoints_and_persistence(tmp_path: Path) -> Non
             "model_idle_unload_seconds": 300,
             "cpu_threads": 6,
             "log_level": "DEBUG",
+            "hf_token_configured": False,
+            "hf_token_masked": None,
         }
 
     # require_admin rejects non-admin users with 403 FORBIDDEN

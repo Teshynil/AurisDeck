@@ -41,7 +41,7 @@ def test_run_migrations_is_idempotent_and_seeds_default_user(tmp_path: Path) -> 
     db_path = tmp_path / "aurisdeck.db"
 
     first_applied = run_migrations(db_path)
-    assert first_applied == ["0001_initial"]
+    assert first_applied == ["0001_initial", "0002_system_settings"]
     assert not list(tmp_path.glob("aurisdeck.db.bak.*"))
 
     second_applied = run_migrations(db_path)
@@ -74,7 +74,10 @@ def test_run_migrations_is_idempotent_and_seeds_default_user(tmp_path: Path) -> 
         assert {"idx_jobs_status", "idx_jobs_batch_id", "idx_segments_job_seq"}.issubset(indexes)
 
         migrations = conn.execute("SELECT version FROM schema_migrations").fetchall()
-        assert [row["version"] for row in migrations] == ["0001_initial"]
+        assert [row["version"] for row in migrations] == [
+            "0001_initial",
+            "0002_system_settings",
+        ]
 
         user = conn.execute("SELECT * FROM users WHERE id = 'default'").fetchone()
         assert user is not None

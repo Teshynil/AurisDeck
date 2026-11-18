@@ -316,6 +316,125 @@ class UserRepo(_BaseRepo):
             ).fetchone()
             return _row_to_user(row) if row is not None else None
 
+    def setup_initial_admin(
+        self,
+        username: str,
+        password_hash: str,
+        *,
+        locale: str = "es",
+    ) -> UserRecord:
+        """Configure the initial admin user during first-run setup."""
+        now = _utc_now()
+        cleaned_username = username.strip()
+        with self._connection() as conn, conn:
+            existing_default = conn.execute(
+                "SELECT * FROM users WHERE id = 'default'"
+            ).fetchone()
+            if existing_default is not None:
+                prefs = json.loads(existing_default["preferences_json"])
+                if not isinstance(prefs, dict):
+                    prefs = {}
+                prefs["locale"] = locale
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET username = ?,
+                        display_name = ?,
+                        role = 'admin',
+                        password_hash = ?,
+                        preferences_json = ?,
+                        updated_at = ?
+                    WHERE id = 'default'
+                    """,
+                    (
+                        cleaned_username,
+                        cleaned_username,
+                        password_hash,
+                        _dump_json(prefs),
+                        now,
+                    ),
+                )
+                row = conn.execute("SELECT * FROM users WHERE id = 'default'").fetchone()
+                assert row is not None
+                return _row_to_user(row)
+
+            prefs_json = _dump_json(
+                {
+                    "locale": locale,
+                    "default_profile_id": "es-tecnico" if locale == "es" else "en-general",
+                    "player": {"playback_rate": 1.0, "auto_scroll": True},
+                }
+            )
+            conn.execute(
+                """
+                INSERT INTO users (
+                    id, username, display_name, role, password_hash,
+                    api_token_hash, preferences_json, created_at, updated_at
+                )
+                VALUES ('default', ?, ?, 'admin', ?, NULL, ?, ?, ?)
+                """,
+                (cleaned_username, cleaned_username, password_hash, prefs_json, now, now),
+            )
+            row = conn.execute("SELECT * FROM users WHERE id = 'default'").fetchone()
+            assert row is not None
+            return _row_to_user(row)
+
+
+class SystemSettingsRepo(_BaseRepo):
+    """Repository for global system settings stored exclusively in SQLite."""
+
+    KEY_SETUP_COMPLETED = "setup_completed"
+    KEY_HF_TOKEN = "hf_token"
+    KEY_AUTH_MODE = "auth_mode"
+
+    def get(self, key: str) -> str | None:
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM system_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
+            return row["value"] if row is not None else None
+
+    def set(self, key: str, value: str | None) -> None:
+        now = _utc_now()
+        with self._connection() as conn, conn:
+            if value is None:
+                conn.execute("DELETE FROM system_settings WHERE key = ?", (key,))
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO system_settings (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, value, now),
+                )
+
+    def is_setup_completed(self) -> bool:
+        return self.get(self.KEY_SETUP_COMPLETED) == "1"
+
+    def set_setup_completed(self, completed: bool = True) -> None:
+        self.set(self.KEY_SETUP_COMPLETED, "1" if completed else "0")
+
+    def get_hf_token(self) -> str | None:
+        raw = self.get(self.KEY_HF_TOKEN)
+        if raw is None:
+            return None
+        cleaned = raw.strip()
+        return cleaned or None
+
+    def set_hf_token(self, token: str | None) -> None:
+        cleaned = token.strip() if token else None
+        self.set(self.KEY_HF_TOKEN, cleaned)
+
+    def get_auth_mode(self) -> str | None:
+        return self.get(self.KEY_AUTH_MODE)
+
+    def set_auth_mode(self, mode: str) -> None:
+        self.set(self.KEY_AUTH_MODE, mode)
+
 
 class JobRepo(_BaseRepo):
     """Repository for managing transcription jobs and their tracks."""

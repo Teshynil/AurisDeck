@@ -1216,8 +1216,12 @@ def pull_model(model_name: str, hf_endpoint: str | None, data_dir: Path) -> None
         from faster_whisper.utils import download_model
 
         kwargs: dict[str, Any] = {"cache_dir": str(paths.models)}
-        if settings.hf_token:
-            kwargs["use_auth_token"] = settings.hf_token
+        if paths.db_path.is_file():
+            from aurisdeck.db.repositories import SystemSettingsRepo
+
+            db_token = SystemSettingsRepo(paths.db_path).get_hf_token()
+            if db_token:
+                kwargs["use_auth_token"] = db_token
         downloaded_path = download_model(model_name, **kwargs)
     except Exception as exc:
         raise click.ClickException(f"MODEL_DOWNLOAD_FAILED: {exc}") from exc

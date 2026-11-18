@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -24,16 +25,18 @@ from aurisdeck.api.deps import (
     get_locale_loader,
     get_paths,
     get_settings,
+    get_system_settings_repo,
     get_user_repo,
     is_https_request,
     register_exception_handlers,
     require_admin,
     resolve_current_user,
 )
-from aurisdeck.auth.service import AuthError, AuthService
+from aurisdeck.auth.service import AuthError, AuthService, hash_secret
+from aurisdeck.backends.hf_verify import verify_hf_token
 from aurisdeck.config import Settings
 from aurisdeck.db.migrations import run_migrations
-from aurisdeck.db.repositories import JobRepo, SegmentRepo, UserRepo
+from aurisdeck.db.repositories import JobRepo, SegmentRepo, SystemSettingsRepo, UserRepo
 from aurisdeck.domain.models import SlugStr
 from aurisdeck.i18n.loader import LocaleLoader
 from aurisdeck.logging_setup import configure_main_logging, set_log_level
@@ -51,11 +54,31 @@ _SYSTEM_SETTINGS_FILENAME = "system_settings.json"
 
 
 class LoginRequest(BaseModel):
-    """Shared-password login request body."""
+    """Login request body supporting username+password or legacy shared password."""
 
     model_config = ConfigDict(extra="forbid")
 
+    username: str | None = None
     password: str = ""
+
+
+class SetupVerifyTokenRequest(BaseModel):
+    """Payload for verifying a Hugging Face token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str | None = None
+
+
+class SetupCompleteRequest(BaseModel):
+    """First-run setup wizard submission payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    locale: SlugStr = "es"
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=6, max_length=256)
+    hf_token: str | None = None
 
 
 class PlayerPreferencesPatch(BaseModel):
@@ -86,17 +109,41 @@ class AdminSettingsPatch(BaseModel):
     model_idle_unload_seconds: int | None = Field(default=None, ge=0)
     cpu_threads: int | None = Field(default=None, ge=0)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] | None = None
+    hf_token: str | None = None
 
 
 def _system_settings_path(paths: DataPaths) -> Path:
     return paths.root / _SYSTEM_SETTINGS_FILENAME
 
 
-def _current_admin_settings(settings: Settings) -> dict[str, Any]:
+def _mask_token(token: str | None) -> str | None:
+    if not token:
+        return None
+    cleaned = token.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) <= 7:
+        return "••••"
+    prefix = "hf_" if cleaned.startswith("hf_") else ""
+    return f"{prefix}••••{cleaned[-4:]}"
+
+
+def _current_admin_settings(
+    settings: Settings,
+    system_settings_repo: SystemSettingsRepo | None = None,
+) -> dict[str, Any]:
+    token: str | None = None
+    if system_settings_repo is not None:
+        try:
+            token = system_settings_repo.get_hf_token()
+        except sqlite3.OperationalError:
+            token = None
     return {
         "model_idle_unload_seconds": int(settings.model_idle_unload_seconds),
         "cpu_threads": int(settings.cpu_threads),
         "log_level": str(settings.log_level),
+        "hf_token_configured": bool(token),
+        "hf_token_masked": _mask_token(token),
     }
 
 
@@ -115,14 +162,22 @@ def _load_persisted_system_settings(paths: DataPaths, settings: Settings) -> dic
     return _current_admin_settings(settings)
 
 
-def _save_persisted_system_settings(paths: DataPaths, settings: Settings) -> dict[str, Any]:
-    payload = _current_admin_settings(settings)
+def _save_persisted_system_settings(
+    paths: DataPaths,
+    settings: Settings,
+    system_settings_repo: SystemSettingsRepo | None = None,
+) -> dict[str, Any]:
+    file_payload = {
+        "model_idle_unload_seconds": int(settings.model_idle_unload_seconds),
+        "cpu_threads": int(settings.cpu_threads),
+        "log_level": str(settings.log_level),
+    }
     atomic_write_text(
         _system_settings_path(paths),
-        json.dumps(payload, indent=2) + "\n",
+        json.dumps(file_payload, indent=2) + "\n",
         paths.tmp,
     )
-    return payload
+    return _current_admin_settings(settings, system_settings_repo)
 
 
 def _apply_preferences_patch(
@@ -154,16 +209,22 @@ def _build_core_router() -> APIRouter:
 
     @router.get("/auth/status")
     async def auth_status(request: Request) -> dict[str, Any]:
-        settings = get_settings(request)
+        auth_service = get_auth_service(request)
+        system_settings_repo = get_system_settings_repo(request)
         authenticated = False
         try:
             resolve_current_user(request)
             authenticated = True
         except AuthError:
             authenticated = False
+        try:
+            setup_required = not system_settings_repo.is_setup_completed()
+        except sqlite3.OperationalError:
+            setup_required = True
         return {
-            "auth_mode": settings.auth_mode,
+            "auth_mode": auth_service.effective_auth_mode,
             "authenticated": authenticated,
+            "setup_required": setup_required,
         }
 
     @router.post("/auth/login")
@@ -173,17 +234,15 @@ def _build_core_router() -> APIRouter:
         response: Response,
     ) -> dict[str, Any]:
         auth_service = get_auth_service(request)
-        user_repo = get_user_repo(request)
-        if not auth_service.verify_shared_password(body.password):
+        user = auth_service.verify_credentials(body.username, body.password)
+        if user is None:
             raise ApiError(
                 status_code=401,
                 error_code="AUTH_INVALID_CREDENTIALS",
-                detail="Invalid password",
+                detail="Invalid username or password",
             )
 
-        default_user = user_repo.get_by_username("default")
-        user_id = default_user.id if default_user is not None else "default"
-        cookie_value = auth_service.create_session_cookie(user_id=user_id)
+        cookie_value = auth_service.create_session_cookie(user_id=user.id)
         response.set_cookie(
             key=SESSION_COOKIE_NAME,
             value=cookie_value,
@@ -193,6 +252,104 @@ def _build_core_router() -> APIRouter:
             path="/",
         )
         return {"authenticated": True}
+
+    @router.get("/setup/status")
+    async def setup_status(
+        request: Request,
+        locale_loader: Annotated[LocaleLoader, Depends(get_locale_loader)],
+    ) -> dict[str, Any]:
+        system_settings_repo = get_system_settings_repo(request)
+        try:
+            setup_required = not system_settings_repo.is_setup_completed()
+        except sqlite3.OperationalError:
+            setup_required = True
+        return {
+            "setup_required": setup_required,
+            "locales": locale_loader.list_locales(),
+        }
+
+    @router.post("/setup/verify-hf-token")
+    async def setup_verify_hf_token(
+        body: SetupVerifyTokenRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        system_settings_repo = get_system_settings_repo(request)
+        if system_settings_repo.is_setup_completed():
+            raise ApiError(
+                status_code=409,
+                error_code="SETUP_ALREADY_COMPLETED",
+                detail="Initial setup has already been completed",
+            )
+        settings = get_settings(request)
+        result = verify_hf_token(body.token, hf_endpoint=settings.hf_endpoint)
+        return {
+            "valid": result.valid,
+            "status": result.status,
+            "missing_models": result.missing_models,
+            "username": result.username,
+            "detail": result.detail,
+        }
+
+    @router.post("/setup/complete")
+    async def setup_complete(
+        body: SetupCompleteRequest,
+        request: Request,
+        response: Response,
+    ) -> dict[str, Any]:
+        system_settings_repo = get_system_settings_repo(request)
+        if system_settings_repo.is_setup_completed():
+            raise ApiError(
+                status_code=409,
+                error_code="SETUP_ALREADY_COMPLETED",
+                detail="Initial setup has already been completed",
+            )
+
+        cleaned_username = body.username.strip()
+        if not cleaned_username or any(ch.isspace() for ch in cleaned_username):
+            raise ApiError(
+                status_code=422,
+                error_code="VALIDATION_ERROR",
+                error_params={"field": "username"},
+                detail="Username must not be empty or contain spaces",
+            )
+
+        user_repo = get_user_repo(request)
+        auth_service = get_auth_service(request)
+        admin_user = user_repo.setup_initial_admin(
+            cleaned_username,
+            hash_secret(body.password),
+            locale=body.locale,
+        )
+        if body.hf_token is not None and body.hf_token.strip():
+            system_settings_repo.set_hf_token(body.hf_token.strip())
+        else:
+            system_settings_repo.set_hf_token(None)
+        system_settings_repo.set_auth_mode("password")
+        system_settings_repo.set_setup_completed(True)
+
+        settings = get_settings(request)
+        request.app.state.admin_settings = _current_admin_settings(settings, system_settings_repo)
+
+        cookie_value = auth_service.create_session_cookie(user_id=admin_user.id)
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=cookie_value,
+            httponly=True,
+            samesite="lax",
+            secure=is_https_request(request),
+            path="/",
+        )
+        return {
+            "setup_completed": True,
+            "authenticated": True,
+            "user": {
+                "id": admin_user.id,
+                "username": admin_user.username,
+                "display_name": admin_user.display_name,
+                "role": admin_user.role,
+                "preferences": dict(admin_user.preferences),
+            },
+        }
 
     @router.post("/auth/logout")
     async def auth_logout(request: Request, response: Response) -> dict[str, Any]:
@@ -278,7 +435,8 @@ def _build_core_router() -> APIRouter:
         _admin: Annotated[dict[str, Any], Depends(require_admin)],
     ) -> dict[str, Any]:
         settings = get_settings(request)
-        payload = _current_admin_settings(settings)
+        system_settings_repo = get_system_settings_repo(request)
+        payload = _current_admin_settings(settings, system_settings_repo)
         request.app.state.admin_settings = payload
         return payload
 
@@ -290,6 +448,7 @@ def _build_core_router() -> APIRouter:
     ) -> dict[str, Any]:
         settings = get_settings(request)
         paths = get_paths(request)
+        system_settings_repo = get_system_settings_repo(request)
         if body.model_idle_unload_seconds is not None:
             settings.model_idle_unload_seconds = body.model_idle_unload_seconds
         if body.cpu_threads is not None:
@@ -297,9 +456,29 @@ def _build_core_router() -> APIRouter:
         if body.log_level is not None:
             settings.log_level = body.log_level
             set_log_level(settings.log_level)
-        payload = _save_persisted_system_settings(paths, settings)
+        if "hf_token" in body.model_fields_set:
+            system_settings_repo.set_hf_token(body.hf_token)
+        payload = _save_persisted_system_settings(paths, settings, system_settings_repo)
         request.app.state.admin_settings = payload
         return payload
+
+    @router.post("/admin/settings/verify-hf-token")
+    async def admin_verify_hf_token(
+        body: SetupVerifyTokenRequest,
+        request: Request,
+        _admin: Annotated[dict[str, Any], Depends(require_admin)],
+    ) -> dict[str, Any]:
+        settings = get_settings(request)
+        system_settings_repo = get_system_settings_repo(request)
+        token_to_check = body.token if body.token is not None else system_settings_repo.get_hf_token()
+        result = verify_hf_token(token_to_check, hf_endpoint=settings.hf_endpoint)
+        return {
+            "valid": result.valid,
+            "status": result.status,
+            "missing_models": result.missing_models,
+            "username": result.username,
+            "detail": result.detail,
+        }
 
     @router.get("/system/devices")
     async def get_system_devices(
@@ -330,11 +509,16 @@ def create_app(
     resolved_settings = settings or Settings()
     paths = DataPaths(resolved_settings.data_dir)
     user_repo = UserRepo(paths.db_path)
+    system_settings_repo = SystemSettingsRepo(paths.db_path)
     job_repo = JobRepo(paths.db_path)
     segment_repo = SegmentRepo(paths.db_path)
     event_bus = EventBus()
     locale_loader = LocaleLoader(_BUILTIN_LOCALES_DIR, paths.locales)
-    auth_service = AuthService(user_repo=user_repo, settings=resolved_settings)
+    auth_service = AuthService(
+        user_repo=user_repo,
+        settings=resolved_settings,
+        system_settings_repo=system_settings_repo,
+    )
     resolved_coordinator = coordinator or Coordinator(
         settings=resolved_settings,
         paths=paths,
@@ -342,12 +526,12 @@ def create_app(
         segment_repo=segment_repo,
         event_bus=event_bus,
         devices=devices,
+        hf_token_provider=system_settings_repo.get_hf_token,
     )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         paths.ensure_dirs()
-        app.state.admin_settings = _load_persisted_system_settings(paths, resolved_settings)
         configure_main_logging(
             paths,
             level=resolved_settings.log_level,
@@ -355,6 +539,8 @@ def create_app(
             backup_count=resolved_settings.log_backup_count,
         )
         run_migrations(paths.db_path)
+        app.state.admin_settings = _load_persisted_system_settings(paths, resolved_settings)
+        app.state.admin_settings = _current_admin_settings(resolved_settings, system_settings_repo)
         seed_default_profiles(ProfileStore(paths))
         app.state.coordinator.start()
         try:
@@ -374,6 +560,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.paths = paths
     app.state.user_repo = user_repo
+    app.state.system_settings_repo = system_settings_repo
     app.state.job_repo = job_repo
     app.state.segment_repo = segment_repo
     app.state.auth_service = auth_service

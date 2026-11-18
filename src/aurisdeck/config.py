@@ -32,10 +32,6 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("HF_ENDPOINT", "AURISDECK_HF_ENDPOINT", "hf_endpoint"),
     )
-    hf_token: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("HF_TOKEN", "AURISDECK_HF_TOKEN", "hf_token"),
-    )
 
     @field_validator("log_level", mode="before")
     @classmethod

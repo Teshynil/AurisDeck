@@ -211,6 +211,7 @@ class Coordinator:
         event_bus: EventBus,
         devices: list[DeviceInfo] | None = None,
         backend_factory: Callable[[], tuple[Any, Any]] | None = None,
+        hf_token_provider: Callable[[], str | None] | None = None,
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -219,6 +220,7 @@ class Coordinator:
         self._event_bus = event_bus
         self._devices: list[DeviceInfo] | None = list(devices) if devices is not None else None
         self._backend_factory = backend_factory
+        self._hf_token_provider = hf_token_provider
 
         self._mp_ctx = multiprocessing.get_context("spawn")
         self._manager: Any = None
@@ -1236,12 +1238,13 @@ class Coordinator:
 
         diar_cfg = cfg.get("diarization", {})
         model_id = str(diar_cfg.get("model_id") or "pyannote/speaker-diarization-3.1")
+        hf_token = self._hf_token_provider() if self._hf_token_provider is not None else None
         return WorkerDiarizeTask(
             job_id=job.id,
             audio_path=task.audio_path,
             model_id=model_id,
             models_dir=str(self._paths.models),
-            hf_token=self._settings.hf_token,
+            hf_token=hf_token,
             hf_endpoint=self._settings.hf_endpoint,
             min_speakers=diar_cfg.get("min_speakers"),
             max_speakers=diar_cfg.get("max_speakers"),

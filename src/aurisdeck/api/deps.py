@@ -14,7 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from aurisdeck.auth.service import AuthError, AuthService
 from aurisdeck.backends.errors import AurisDeckBackendError
 from aurisdeck.config import Settings
-from aurisdeck.db.repositories import JobRepo, SegmentRepo, UserRepo
+from aurisdeck.db.repositories import JobRepo, SegmentRepo, SystemSettingsRepo, UserRepo
 from aurisdeck.i18n.loader import LocaleLoader
 from aurisdeck.storage.paths import DataPaths
 from aurisdeck.workers.coordinator import Coordinator
@@ -72,6 +72,10 @@ def get_paths(request: Request) -> DataPaths:
 
 def get_user_repo(request: Request) -> UserRepo:
     return request.app.state.user_repo
+
+
+def get_system_settings_repo(request: Request) -> SystemSettingsRepo:
+    return request.app.state.system_settings_repo
 
 
 def get_job_repo(request: Request) -> JobRepo:
