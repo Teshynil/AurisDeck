@@ -431,23 +431,10 @@ def test_e2e_multitrack_zip_with_offsets_preserves_chronological_order(
     alice_wav = _generate_sine_wav(tmp_path / "inputs" / "1-alice.wav", frequency=440, duration_s=2)
     bob_wav = _generate_sine_wav(tmp_path / "inputs" / "2-bob.wav", frequency=660, duration_s=2)
 
-    info_txt = "Track 1: Alice\nTrack 2: Bob\n"
-    aup_xml = """<?xml version="1.0" standalone="no" ?>
-    <project>
-      <wavetrack name="1-alice.wav">
-        <waveclip offset="1.500" />
-      </wavetrack>
-      <wavetrack name="2-bob.wav">
-        <waveclip offset="0.0" />
-      </wavetrack>
-    </project>
-    """
     archive_bytes = _make_zip_bytes(
         {
             "1-alice.wav": alice_wav.read_bytes(),
             "2-bob.wav": bob_wav.read_bytes(),
-            "info.txt": info_txt,
-            "session.aup": aup_xml,
         }
     )
 
@@ -461,12 +448,12 @@ def test_e2e_multitrack_zip_with_offsets_preserves_chronological_order(
         inspected = {item["filename"]: item for item in inspect_resp.json()}
         assert inspected["1-alice.wav"] == {
             "filename": "1-alice.wav",
-            "speaker_name": "Alice",
-            "offset_ms": 1500,
+            "speaker_name": "1-alice",
+            "offset_ms": 0,
         }
         assert inspected["2-bob.wav"] == {
             "filename": "2-bob.wav",
-            "speaker_name": "Bob",
+            "speaker_name": "2-bob",
             "offset_ms": 0,
         }
 
@@ -476,7 +463,13 @@ def test_e2e_multitrack_zip_with_offsets_preserves_chronological_order(
             data={
                 "mode": "multitrack",
                 "profile_id": "multipista-sync",
-                "overrides_json": json.dumps({"formats": ["vtt"]}),
+                "overrides_json": json.dumps(
+                    {
+                        "formats": ["vtt"],
+                        "speaker_aliases": {"1-alice.wav": "Alice", "2-bob.wav": "Bob"},
+                        "track_offsets": {"1-alice.wav": 1500},
+                    }
+                ),
             },
         )
         assert create_resp.status_code == 201, create_resp.text

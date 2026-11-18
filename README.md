@@ -112,7 +112,7 @@ Upload one audio or video file. Audio is automatically extracted as 16 kHz mono 
 
 Upload multiple per-speaker audio tracks or a `.zip` archive containing individual tracks:
 
-- **Automatic metadata parsing:** When a `.zip` archive includes a Craig `info.txt` (e.g., `Track 1: Alice` or `1-alice.ogg: Alice`) or an Audacity `.aup` project XML (`<wavetrack>` and `<waveclip offset="...">`), AurisDeck automatically detects speaker names and timeline offsets in milliseconds.
+- **Agnostic archive ingestion:** `.zip` archives are unpacked directly for supported audio/video tracks (with Zip-Slip protection), deriving initial speaker labels from filenames with `0 ms` default offsets.
 - **Manual overrides:** You can inspect `.zip` contents before submission (`POST /api/v1/jobs/inspect-zip`) and override `speaker_aliases` or `track_offsets` per file.
 - **Parallel execution:** Independent tracks are scheduled across all allowed CUDA/CPU workers simultaneously and merged chronologically into a single transcript with exact speaker attribution.
 

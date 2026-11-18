@@ -1,4 +1,4 @@
-"""Tests for media probing/extraction, .aup/info.txt parsers, and safe ZIP ingestion."""
+"""Tests for media probing/extraction and safe ZIP ingestion."""
 
 from __future__ import annotations
 
@@ -12,13 +12,9 @@ import pytest
 
 from aurisdeck.media import (
     SUPPORTED_MEDIA_EXTENSIONS,
-    AudacityAupParser,
-    CraigInfoParser,
     MediaInvalidError,
-    TrackHint,
     ZipSlipError,
     extract_wav_16k,
-    parse_track_hints,
     probe_duration_ms,
     unpack_multitrack_zip,
 )
@@ -98,10 +94,9 @@ def test_zip_ignores_macos_metadata_and_unsupported_files(tmp_path: Path) -> Non
     result = unpack_multitrack_zip(zip_path, dest_dir)
 
     assert len(result) == 1
-    extracted_path, hint = result[0]
+    extracted_path = result[0]
     assert extracted_path == dest_dir.resolve() / "alice.wav"
     assert extracted_path.read_bytes() == b"RIFFalice"
-    assert hint == TrackHint(filename="alice.wav", speaker_name="alice", offset_ms=0)
 
 
 def test_zip_deduplicates_identical_filenames_across_subdirs(tmp_path: Path) -> None:
@@ -115,9 +110,8 @@ def test_zip_deduplicates_identical_filenames_across_subdirs(tmp_path: Path) -> 
     )
 
     dest_dir = tmp_path / "extracted"
-    result = unpack_multitrack_zip(zip_path, dest_dir)
+    paths = unpack_multitrack_zip(zip_path, dest_dir)
 
-    paths = [path for path, _ in result]
     assert [p.name for p in paths] == ["track.wav", "track_2.wav", "track_3.wav"]
     assert {p.read_bytes() for p in paths} == {b"audio-a", b"audio-b", b"audio-c"}
 
@@ -132,37 +126,25 @@ def test_zip_unpacks_skipping_excluded_members(tmp_path: Path) -> None:
         ],
     )
     dest_dir = tmp_path / "out_excluded"
-    result = unpack_multitrack_zip(
+    paths = unpack_multitrack_zip(
         zip_path,
         dest_dir,
         excluded_members=["a/track.wav", "bot.flac"],
     )
 
-    paths = [path for path, _ in result]
     assert [p.name for p in paths] == ["track.wav"]
     assert paths[0].read_bytes() == b"audio-b"
     assert not (dest_dir / "bot.flac").exists()
 
 
-def test_zip_unpacks_with_case_insensitive_aup_and_info_txt(tmp_path: Path) -> None:
-    aup_xml = (
-        '<?xml version="1.0" encoding="utf-8"?>'
-        "<project>"
-        '  <wavetrack name="1-user">'
-        '    <waveclip offset="3.5"/>'
-        '    <waveclip offset="12.0"/>'
-        "  </wavetrack>"
-        '  <wavetrack name="Bob">'
-        '    <waveclip offset="1.25"/>'
-        "  </wavetrack>"
-        "</project>"
-    )
-    info_txt = "Recording: Session 12\nDate: 2026-11-17\nTrack 1: Alice\n"
+def test_zip_unpacks_media_only_ignoring_aup_and_info_txt(tmp_path: Path) -> None:
+    unsafe_aup_xml = '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe "1">]><project/>'
+    info_txt = "Recording: Session 12\nTrack 1: Alice\n"
     zip_path = _write_zip(
         tmp_path / "multitrack.zip",
         [
             ("Session/INFO.TXT", info_txt.encode("utf-8")),
-            ("Session/PROJECT.AUP", aup_xml.encode("utf-8")),
+            ("Session/PROJECT.AUP", unsafe_aup_xml.encode("utf-8")),
             ("Session/1-user.flac", b"flac-1"),
             ("Session/Bob.ogg", b"ogg-2"),
             ("Session/extra.mp3", b"mp3-3"),
@@ -170,78 +152,11 @@ def test_zip_unpacks_with_case_insensitive_aup_and_info_txt(tmp_path: Path) -> N
     )
 
     dest_dir = tmp_path / "out"
-    result = unpack_multitrack_zip(zip_path, dest_dir)
+    paths = unpack_multitrack_zip(zip_path, dest_dir)
 
-    by_name = {path.name: hint for path, hint in result}
-    assert set(by_name) == {"1-user.flac", "Bob.ogg", "extra.mp3"}
-    assert by_name["1-user.flac"] == TrackHint(
-        filename="1-user.flac",
-        speaker_name="Alice",
-        offset_ms=3500,
-    )
-    assert by_name["Bob.ogg"] == TrackHint(
-        filename="Bob.ogg",
-        speaker_name="Bob",
-        offset_ms=1250,
-    )
-    assert by_name["extra.mp3"] == TrackHint(
-        filename="extra.mp3",
-        speaker_name="extra",
-        offset_ms=0,
-    )
+    assert [p.name for p in paths] == ["1-user.flac", "Bob.ogg", "extra.mp3"]
     assert not (dest_dir / "INFO.TXT").exists()
     assert not (dest_dir / "PROJECT.AUP").exists()
-
-
-def test_aup_parser_extracts_first_waveclip_and_handles_namespaces() -> None:
-    aup_xml = (
-        '<project xmlns="http://audacity.sourceforge.net/xml/">'
-        '  <wavetrack name="Alice">'
-        '    <waveclip offset="3.5"/>'
-        '    <waveclip offset="9.0"/>'
-        "  </wavetrack>"
-        '  <wavetrack name="Narrator"/>'
-        "</project>"
-    )
-    hints = AudacityAupParser.parse(aup_xml)
-    assert hints["Alice"] == TrackHint(filename="Alice", speaker_name="Alice", offset_ms=3500)
-    assert hints["Narrator"] == TrackHint(
-        filename="Narrator",
-        speaker_name="Narrator",
-        offset_ms=0,
-    )
-
-
-@pytest.mark.parametrize(
-    "unsafe_xml",
-    [
-        '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><project/>',
-        '<!doctype project PUBLIC "-//audacity//DTD//EN" "http://example.com/a.dtd"><project/>',
-        '<project><!ENTITY test "1"></project>',
-    ],
-)
-def test_aup_parser_rejects_doctype_and_entity(unsafe_xml: str) -> None:
-    with pytest.raises(ValueError, match="DOCTYPE|ENTITY"):
-        AudacityAupParser.parse(unsafe_xml)
-
-
-def test_craig_info_parser_patterns_and_empty_fallback() -> None:
-    assert CraigInfoParser.parse("") == {}
-    assert CraigInfoParser.parse("Recording: Foo\nRandom line without mapping\n") == {}
-
-    info_text = (
-        "Recording: RPG Session\n"
-        "Track 1: Alice\n"
-        "Track 2 - Bob#4321\n"
-        "3-charlie.flac: Charlie\n"
-        "4-dave"
-    )
-    parsed = CraigInfoParser.parse(info_text)
-    assert parsed["1"].speaker_name == "Alice"
-    assert parsed["2"].speaker_name == "Bob#4321"
-    assert parsed["3-charlie.flac"].speaker_name == "Charlie"
-    assert parsed["4-dave"].speaker_name == "dave"
-    assert parse_track_hints(info_text=None, aup_text=None) == {}
 
 
 def test_supported_media_extensions_contains_expected_formats() -> None:

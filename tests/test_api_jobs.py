@@ -184,23 +184,12 @@ def test_jobs_require_auth_when_password_enabled(tmp_path: Path) -> None:
 
 def test_inspect_zip_multitrack_and_tmp_cleanup(tmp_path: Path) -> None:
     app, _ = _build_jobs_test_app(tmp_path)
-    aup_xml = """<?xml version="1.0" standalone="no" ?>
-    <project>
-      <wavetrack name="1-alice.ogg">
-        <waveclip offset="1.500" />
-      </wavetrack>
-      <wavetrack name="2-bob.ogg">
-        <waveclip offset="0.0" />
-      </wavetrack>
-    </project>
-    """
-    info_txt = "Track 1: Alicia\nTrack 2: Roberto\n"
     archive_bytes = _make_zip_bytes(
         {
             "1-alice.ogg": b"OGG_ALICE",
             "2-bob.ogg": b"OGG_BOB",
-            "session.aup": aup_xml,
-            "info.txt": info_txt,
+            "session.aup": "<project/>",
+            "info.txt": "Track 1: Alicia\nTrack 2: Roberto\n",
             "__MACOSX/._1-alice.ogg": b"junk",
             ".DS_Store": b"junk",
         }
@@ -217,12 +206,12 @@ def test_inspect_zip_multitrack_and_tmp_cleanup(tmp_path: Path) -> None:
         by_file = {item["filename"]: item for item in items}
         assert by_file["1-alice.ogg"] == {
             "filename": "1-alice.ogg",
-            "speaker_name": "Alicia",
-            "offset_ms": 1500,
+            "speaker_name": "1-alice",
+            "offset_ms": 0,
         }
         assert by_file["2-bob.ogg"] == {
             "filename": "2-bob.ogg",
-            "speaker_name": "Roberto",
+            "speaker_name": "2-bob",
             "offset_ms": 0,
         }
 
@@ -355,7 +344,7 @@ def test_create_multitrack_zip_and_loose_files_with_aliases_and_offsets(tmp_path
                 "title": "D&D Session 12",
                 "overrides_json": json.dumps(
                     {
-                        "speaker_aliases": {"1-alice.ogg": "Alicia", "Bob": "Roberto"},
+                        "speaker_aliases": {"1-alice.ogg": "Alicia", "2-bob.ogg": "Roberto"},
                         "track_offsets": {"2-bob.ogg": 2400},
                     }
                 ),
@@ -803,7 +792,7 @@ def test_zip_excluded_tracks_in_multitrack_batch_and_single_modes(tmp_path: Path
         assert single_resp.json()["job"]["tracks"][0]["original_filename"] == "alice.flac"
 
 
-def test_unsafe_aup_logs_warning_and_job_logs_endpoint(tmp_path: Path) -> None:
+def test_zip_ignores_aup_and_job_logs_endpoint(tmp_path: Path) -> None:
     app, _coordinator = _build_jobs_test_app(tmp_path)
     paths = DataPaths(tmp_path)
     zip_buf = io.BytesIO()
@@ -812,13 +801,19 @@ def test_unsafe_aup_logs_warning_and_job_logs_endpoint(tmp_path: Path) -> None:
         zf.writestr("track1.wav", b"RIFF" + b"\x00" * 36)
 
     with TestClient(app) as client:
+        ok = client.post(
+            "/api/v1/jobs/inspect-zip",
+            files=[("file", ("archive.zip", zip_buf.getvalue(), "application/zip"))],
+        )
+        assert ok.status_code == 200
+        assert ok.json() == [{"filename": "track1.wav", "speaker_name": "track1", "offset_ms": 0}]
+
         bad = client.post(
             "/api/v1/jobs/inspect-zip",
-            files=[("file", ("bad.zip", zip_buf.getvalue(), "application/zip"))],
+            files=[("file", ("bad.zip", b"not-a-zip", "application/zip"))],
         )
         assert bad.status_code == 400
         assert bad.json()["error_code"] == "INVALID_ARCHIVE"
-        assert "DOCTYPE/ENTITY" in bad.json()["detail"]
 
         main_log = paths.logs / "aurisdeck.log"
         assert main_log.is_file()
