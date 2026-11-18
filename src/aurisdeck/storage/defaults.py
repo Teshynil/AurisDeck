@@ -32,7 +32,6 @@ def default_profiles() -> list[ProfileSchema]:
             ),
             diarization=ProfileDiarizationConfig(enabled=False),
             output=ProfileOutputConfig(
-                formats=["vtt", "md"],
                 subtitles=SubtitlesOutputConfig(
                     voice_style="v_tag",
                     max_cue_seconds=6.0,
@@ -56,7 +55,6 @@ def default_profiles() -> list[ProfileSchema]:
             ),
             diarization=ProfileDiarizationConfig(enabled=False),
             output=ProfileOutputConfig(
-                formats=["vtt", "srt"],
                 subtitles=SubtitlesOutputConfig(
                     voice_style="none",
                     max_cue_seconds=5.0,
@@ -81,7 +79,6 @@ def default_profiles() -> list[ProfileSchema]:
             ),
             diarization=ProfileDiarizationConfig(enabled=False),
             output=ProfileOutputConfig(
-                formats=["vtt", "md", "json"],
                 subtitles=SubtitlesOutputConfig(
                     voice_style="v_tag",
                     max_cue_seconds=6.0,
@@ -105,7 +102,6 @@ def default_profiles() -> list[ProfileSchema]:
             ),
             diarization=ProfileDiarizationConfig(enabled=False),
             output=ProfileOutputConfig(
-                formats=["vtt", "md"],
                 subtitles=SubtitlesOutputConfig(
                     voice_style="v_tag",
                     max_cue_seconds=6.0,

@@ -88,6 +88,11 @@
       "offset_ms": "Offset (ms)",
       "duration": "Duration"
     },
+    "discard_track": "Discard track",
+    "restore_track": "Restore",
+    "zip_tracks_label": "Included ZIP tracks",
+    "excluded_tracks_label": "Excluded ZIP tracks",
+    "no_active_tracks": "Keep at least one active track to transcribe.",
     "submit": "Transcribe",
     "submitting": "Submitting...",
     "queue_title": "Active queue and devices",

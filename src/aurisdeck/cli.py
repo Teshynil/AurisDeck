@@ -1074,7 +1074,7 @@ def list_profiles(data_dir: Path) -> None:
     table.add_column("Model")
     table.add_column("Language")
     table.add_column("Diarize")
-    table.add_column("Formats")
+    table.add_column("Subtitles")
 
     for prof in items:
         table.add_row(
@@ -1084,7 +1084,7 @@ def list_profiles(data_dir: Path) -> None:
             prof.asr.model,
             prof.asr.language or "auto",
             "yes" if prof.diarization.enabled else "no",
-            ", ".join(prof.output.formats),
+            prof.output.subtitles.voice_style,
         )
     console.print(table)
 

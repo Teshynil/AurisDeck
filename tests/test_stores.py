@@ -178,7 +178,7 @@ def test_migrate_profile_handles_legacy_and_rejects_unknown_version() -> None:
     assert migrated.display_name == "Perfil Legacy"
     assert migrated.diarization.enabled is True
     assert migrated.asr.backend == "faster-whisper"
-    assert migrated.output.formats == ["vtt"]
+    assert migrated.output.subtitles.voice_style == "v_tag"
 
     zero_version = migrate_profile({"schema_version": 0, "id": "v0", "display_name": "V0"})
     assert zero_version.schema_version == 1

@@ -6,6 +6,7 @@ import re
 import shutil
 import stat
 import zipfile
+from collections.abc import Collection
 from pathlib import Path, PurePosixPath
 
 from aurisdeck.media.ffmpeg import MediaInvalidError
@@ -13,7 +14,7 @@ from aurisdeck.media.parsers import TrackHint, parse_track_hints, resolve_track_
 from aurisdeck.storage.paths import is_ignored_archive_member, sanitize_filename
 
 SUPPORTED_MEDIA_EXTENSIONS: frozenset[str] = frozenset(
-    {".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a", ".aac", ".mp4", ".webm", ".mkv"}
+    {".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a", ".aac", ".mp4", ".mov", ".webm", ".mkv"}
 )
 
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
@@ -78,12 +79,34 @@ def _deduplicated_dest_path(dest_root: Path, raw_basename: str, used_names: set[
     return dest_root / candidate_name
 
 
-def unpack_multitrack_zip(zip_path: Path | str, dest_dir: Path | str) -> list[tuple[Path, TrackHint]]:
+def _normalize_excluded_members(
+    excluded_members: Collection[str] | None,
+) -> tuple[set[str], set[str]]:
+    """Return normalized archive paths and basenames to exclude."""
+    excluded_paths: set[str] = set()
+    excluded_names: set[str] = set()
+    for raw in excluded_members or ():
+        norm = str(raw or "").replace("\\", "/").strip().lstrip("/")
+        if not norm:
+            continue
+        excluded_paths.add(norm.lower())
+        if "/" not in norm:
+            excluded_names.add(norm.lower())
+    return excluded_paths, excluded_names
+
+
+def unpack_multitrack_zip(
+    zip_path: Path | str,
+    dest_dir: Path | str,
+    *,
+    excluded_members: Collection[str] | None = None,
+) -> list[tuple[Path, TrackHint]]:
     """Safely unpack supported audio/video tracks and parse `.aup` / `info.txt` hints."""
     archive_path = Path(zip_path)
     dest_path = Path(dest_dir)
     dest_path.mkdir(parents=True, exist_ok=True)
     dest_root = dest_path.resolve()
+    excluded_paths, excluded_names = _normalize_excluded_members(excluded_members)
 
     info_entries: list[tuple[str, zipfile.ZipInfo]] = []
     aup_entries: list[tuple[str, zipfile.ZipInfo]] = []
@@ -112,6 +135,8 @@ def unpack_multitrack_zip(zip_path: Path | str, dest_dir: Path | str) -> list[tu
                 elif Path(lowered).suffix == ".aup":
                     aup_entries.append((normalized, member))
                 elif Path(lowered).suffix in SUPPORTED_MEDIA_EXTENSIONS:
+                    if normalized.lower() in excluded_paths or lowered in excluded_names:
+                        continue
                     media_entries.append((normalized, member))
 
             info_entries.sort(key=lambda item: (item[0].count("/"), item[0]))

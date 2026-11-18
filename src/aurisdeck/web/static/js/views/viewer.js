@@ -438,8 +438,9 @@ export function mount(container) {
       return;
     }
 
-    const available = Array.isArray(job.available_formats) ? job.available_formats : [];
-    if (!available.includes("vtt")) {
+    const hasSegments = Array.isArray(job.segments) && job.segments.length > 0;
+    const isCompleted = job.status === "completed" || job.status === "completed_partial";
+    if (!hasSegments && !isCompleted) {
       local.vttPreviewText = buildFallbackVtt(job);
       local.vttPreviewStatus = "ready";
       renderExportBar();
@@ -1422,13 +1423,14 @@ export function mount(container) {
       return;
     }
 
-    const available = new Set(
-      Array.isArray(job.available_formats) ? job.available_formats : []
-    );
+    const canDownload =
+      (Array.isArray(job.segments) && job.segments.length > 0) ||
+      job.status === "completed" ||
+      job.status === "completed_partial";
 
     const downloadButtons = EXPORT_FORMATS.map((fmt) => {
       const label = i18n.t(`viewer.download_${fmt}`);
-      if (available.has(fmt)) {
+      if (canDownload) {
         return el("a", {
           className: "btn btn-secondary btn-sm",
           href: api.jobDownloadUrl(job.id, fmt),

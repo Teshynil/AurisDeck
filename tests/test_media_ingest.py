@@ -122,6 +122,28 @@ def test_zip_deduplicates_identical_filenames_across_subdirs(tmp_path: Path) -> 
     assert {p.read_bytes() for p in paths} == {b"audio-a", b"audio-b", b"audio-c"}
 
 
+def test_zip_unpacks_skipping_excluded_members(tmp_path: Path) -> None:
+    zip_path = _write_zip(
+        tmp_path / "excluded.zip",
+        [
+            ("a/track.wav", b"audio-a"),
+            ("b/track.wav", b"audio-b"),
+            ("c/bot.flac", b"bot-audio"),
+        ],
+    )
+    dest_dir = tmp_path / "out_excluded"
+    result = unpack_multitrack_zip(
+        zip_path,
+        dest_dir,
+        excluded_members=["a/track.wav", "bot.flac"],
+    )
+
+    paths = [path for path, _ in result]
+    assert [p.name for p in paths] == ["track.wav"]
+    assert paths[0].read_bytes() == b"audio-b"
+    assert not (dest_dir / "bot.flac").exists()
+
+
 def test_zip_unpacks_with_case_insensitive_aup_and_info_txt(tmp_path: Path) -> None:
     aup_xml = (
         '<?xml version="1.0" encoding="utf-8"?>'
@@ -232,6 +254,7 @@ def test_supported_media_extensions_contains_expected_formats() -> None:
         ".m4a",
         ".aac",
         ".mp4",
+        ".mov",
         ".webm",
         ".mkv",
     } == set(SUPPORTED_MEDIA_EXTENSIONS)

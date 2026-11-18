@@ -11,10 +11,10 @@ const VALID_TABS = new Set(["transcribe", "library", "viewer", "profiles", "sett
 const THEME_STORAGE_KEY = "aurisdeck:theme";
 
 const VIEW_LOADERS = {
-  transcribe: () => import("./views/simple.js").catch(() => null),
+  transcribe: () => import("./views/transcribe.js").catch(() => null),
   library: () => import("./views/library.js").catch(() => null),
   viewer: () => import("./views/viewer.js").catch(() => null),
-  profiles: () => import("./views/advanced.js").catch(() => null),
+  profiles: () => import("./views/profiles.js").catch(() => null),
   settings: () => import("./views/settings.js").catch(() => null),
 };
 

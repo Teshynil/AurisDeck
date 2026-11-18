@@ -387,7 +387,7 @@ def test_e2e_single_upload_sse_speakers_patch_and_downloads(
         assert detail["status"] == "completed"
         assert detail["available_formats"] == ["vtt", "srt", "md", "json"]
 
-        # Rename speaker and verify instant CPU re-export across all 4 formats.
+        # Rename speaker and verify instant CPU cache invalidation + on-demand export across all 4 formats.
         patch_resp = client.patch(
             f"/api/v1/jobs/{job_id}/speakers",
             json={"aliases": {"SPEAKER_00": "Elena"}},
@@ -395,7 +395,7 @@ def test_e2e_single_upload_sse_speakers_patch_and_downloads(
         assert patch_resp.status_code == 200
         patch_data = patch_resp.json()
         assert patch_data["speakers"][0]["display_name"] == "Elena"
-        assert set(patch_data["available_formats"]) == {"vtt", "srt", "md", "json"}
+        assert "json" in patch_data["available_formats"]
 
         vtt_resp = client.get(f"/api/v1/jobs/{job_id}/download/vtt")
         assert vtt_resp.status_code == 200

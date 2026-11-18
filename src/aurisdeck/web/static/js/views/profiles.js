@@ -116,7 +116,6 @@ function createEmptyProfile(ownerId = "default") {
       cpu_threads: 0,
     },
     output: {
-      formats: ["vtt"],
       subtitles: {
         voice_style: "v_tag",
         max_cue_seconds: 6.0,
@@ -206,7 +205,6 @@ function normalizeProfile(raw, fallbackOwner = "default") {
       cpu_threads: Number.isFinite(Number(hw.cpu_threads)) && Number(hw.cpu_threads) >= 0 ? Math.round(Number(hw.cpu_threads)) : 0,
     },
     output: {
-      formats: rawFormats.length > 0 ? rawFormats : ["vtt"],
       subtitles: {
         voice_style: VOICE_STYLES.includes(subs.voice_style) ? subs.voice_style : "v_tag",
         max_cue_seconds: Number.isFinite(Number(subs.max_cue_seconds)) && Number(subs.max_cue_seconds) > 0
@@ -511,14 +509,6 @@ export function mount(container) {
       };
     }
 
-    const formats = Array.isArray(p.output.formats) ? p.output.formats.filter(Boolean) : [];
-    if (formats.length === 0) {
-      return {
-        error: `${t("errors.VALIDATION_ERROR")} (${t("advanced.profiles.output_formats")})`,
-        payload: null,
-      };
-    }
-
     const payload = {
       schema_version: 1,
       id,
@@ -561,7 +551,6 @@ export function mount(container) {
         cpu_threads: Math.max(0, Number.parseInt(p.hardware.cpu_threads, 10) || 0),
       },
       output: {
-        formats,
         subtitles: {
           voice_style: p.output.subtitles.voice_style || "v_tag",
           max_cue_seconds: Math.max(0.5, Number(p.output.subtitles.max_cue_seconds) || 6.0),
@@ -1643,44 +1632,18 @@ export function mount(container) {
     );
     form.appendChild(hardwareCard);
 
-    // 5. Output
+    // 5. Output (Subtitles)
     const outputCard = el(
       "div",
       { className: "card" },
       el(
         "div",
         { className: "card-header" },
-        el("h3", { className: "card-title", textContent: t("advanced.profiles.output_formats") })
+        el("h3", { className: "card-title", textContent: t("advanced.profiles.voice_style") })
       ),
       el(
         "div",
         { className: "card-body" },
-        el(
-          "div",
-          { className: "row" },
-          OUTPUT_FORMATS.map((fmt) =>
-            el(
-              "label",
-              { className: "checkbox-label" },
-              el("input", {
-                type: "checkbox",
-                checked: p.output.formats.includes(fmt),
-                onChange: (ev) => {
-                  if (ev.target.checked) {
-                    if (!p.output.formats.includes(fmt)) {
-                      p.output.formats.push(fmt);
-                    }
-                  } else if (p.output.formats.length > 1) {
-                    p.output.formats = p.output.formats.filter((item) => item !== fmt);
-                  } else {
-                    ev.target.checked = true;
-                  }
-                },
-              }),
-              el("span", { className: "mono", textContent: fmt })
-            )
-          )
-        ),
         el(
           "div",
           { className: "form-grid" },

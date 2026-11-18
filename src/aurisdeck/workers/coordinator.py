@@ -22,8 +22,7 @@ from aurisdeck.backends.base import ASRContext, ASRResult, ASRSegment, ASRWord, 
 from aurisdeck.config import Settings
 from aurisdeck.db.recovery import run_startup_recovery
 from aurisdeck.db.repositories import JobRecord, JobRepo, SegmentRecord, SegmentRepo
-from aurisdeck.export.cue_segmenter import SegmentItem, WordTiming, segment_to_cues
-from aurisdeck.export.exporters import export_json, export_markdown, export_srt, export_vtt
+from aurisdeck.export.job_outputs import render_job_outputs
 from aurisdeck.media.ffmpeg import MediaInvalidError, extract_wav_16k, mix_multitrack_audio
 from aurisdeck.media.ingest import SUPPORTED_MEDIA_EXTENSIONS
 from aurisdeck.pipeline.merger import TranscriptMerger
@@ -1458,89 +1457,17 @@ class Coordinator:
         segments: list[SegmentRecord],
         speakers: list[Any],
     ) -> list[Path]:
-        speaker_aliases = {sp.speaker_key: sp.display_name for sp in speakers}
-        segment_items = [
-            SegmentItem(
-                seq=seg.seq,
-                start_ms=seg.start_ms,
-                end_ms=seg.end_ms,
-                speaker_key=seg.speaker_key or None,
-                raw_text=seg.raw_text,
-                text=seg.text,
-                words=[
-                    WordTiming(
-                        start_ms=int(w.get("start_ms", 0)),
-                        end_ms=int(w.get("end_ms", 0)),
-                        text=str(w.get("text", "")),
-                    )
-                    for w in seg.words
-                ],
-            )
-            for seg in segments
-        ]
-
         output_cfg = job.effective_config.get("output", {})
-        formats = list(output_cfg.get("formats", ["vtt"]))
-        sub_cfg = output_cfg.get("subtitles", {})
-        voice_style = str(sub_cfg.get("voice_style", "v_tag"))
-        max_cue_seconds = float(sub_cfg.get("max_cue_seconds", 6.0))
-        max_chars_per_line = int(sub_cfg.get("max_chars_per_line", 68))
-        max_lines_per_cue = int(sub_cfg.get("max_lines_per_cue", 2))
-
-        cues = segment_to_cues(
-            segment_items,
-            speaker_aliases=speaker_aliases,
-            max_chars_per_line=max_chars_per_line,
-            max_lines_per_cue=max_lines_per_cue,
-            max_cue_seconds=max_cue_seconds,
+        explicit_formats = output_cfg.get("formats") if isinstance(output_cfg, dict) else None
+        target_formats = list(explicit_formats) if explicit_formats else ["json"]
+        return render_job_outputs(
+            self._paths,
+            job,
+            segments,
+            speakers,
+            formats=target_formats,
+            invalidate_cache=True,
         )
-
-        out_dir = self._paths.job_outputs_dir(job.id)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        stem = _output_stem(job)
-        language = job.language_detected or job.language_requested
-
-        job_meta = {
-            "id": job.id,
-            "title": job.title,
-            "mode": job.mode,
-            "language_requested": job.language_requested,
-            "language_detected": job.language_detected,
-            "created_at": job.created_at,
-            "completed_at": job.completed_at,
-        }
-
-        written: list[Path] = []
-        for fmt in formats:
-            normalized = str(fmt).lower().lstrip(".")
-            if normalized == "vtt":
-                dest = out_dir / f"{stem}.vtt"
-                content = export_vtt(cues, language=language, voice_style=voice_style)
-            elif normalized == "srt":
-                dest = out_dir / f"{stem}.srt"
-                content = export_srt(cues, voice_style=voice_style)
-            elif normalized == "md":
-                dest = out_dir / f"{stem}.md"
-                content = export_markdown(
-                    segment_items,
-                    speaker_aliases=speaker_aliases,
-                    title=job.title,
-                )
-            elif normalized == "json":
-                dest = out_dir / f"{stem}.json"
-                content = export_json(
-                    job_meta,
-                    segment_items,
-                    speaker_aliases=speaker_aliases,
-                )
-            else:
-                logger.warning("Ignoring unsupported export format %r for job %s", fmt, job.id)
-                continue
-
-            atomic_write_text(dest, content, self._paths.tmp)
-            written.append(dest)
-
-        return written
 
     def _maybe_generate_multitrack_mix(self, job: JobRecord) -> Path | None:
         if job.mode != "multitrack" or len(job.tracks) < 2 or not job.media_retained:

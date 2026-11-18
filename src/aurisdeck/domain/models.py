@@ -103,12 +103,8 @@ class SubtitlesOutputConfig(BaseModel):
 
 
 class ProfileOutputConfig(BaseModel):
-    """Export formats and subtitle rendering options."""
+    """Subtitle rendering options."""
 
-    formats: list[Literal["vtt", "srt", "md", "json"]] = Field(
-        default_factory=lambda: ["vtt"],
-        min_length=1,
-    )
     subtitles: SubtitlesOutputConfig = Field(default_factory=SubtitlesOutputConfig)
 
 

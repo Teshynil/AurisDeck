@@ -88,6 +88,11 @@
       "offset_ms": "Desfase (ms)",
       "duration": "Duración"
     },
+    "discard_track": "Descartar pista",
+    "restore_track": "Restaurar",
+    "zip_tracks_label": "Pistas incluidas del ZIP",
+    "excluded_tracks_label": "Pistas descartadas del ZIP",
+    "no_active_tracks": "Debes mantener al menos una pista activa para transcribir.",
     "submit": "Transcribir",
     "submitting": "Enviando...",
     "queue_title": "Cola y dispositivos activos",

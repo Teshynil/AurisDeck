@@ -278,7 +278,6 @@ def test_create_single_job_overrides_snapshot_and_range_streaming(tmp_path: Path
             "initial_prompt": "Architecture review",
             "glossary_ids": ["devops"],
             "gpus": [0],
-            "formats": ["vtt", "json"],
             "subtitles": {"voice_style": "prefix", "max_chars_per_line": 50},
         }
         create_resp = client.post(
@@ -299,7 +298,6 @@ def test_create_single_job_overrides_snapshot_and_range_streaming(tmp_path: Path
         assert payload["effective_config"]["asr"]["language"] == "en"
         assert payload["effective_config"]["diarization"]["enabled"] is True
         assert payload["effective_config"]["hardware"]["gpus"] == [0]
-        assert payload["effective_config"]["output"]["formats"] == ["vtt", "json"]
         assert payload["effective_config"]["output"]["subtitles"]["voice_style"] == "prefix"
         assert "Istio" in payload["effective_config"]["effective_context"]["hotwords"]
         assert stub.enqueued == [job_id]
@@ -494,9 +492,9 @@ def test_speakers_patch_reexport_and_download_preserves_dots(tmp_path: Path) -> 
         patch_data = patch_resp.json()
         assert patch_data["speakers"][0]["display_name"] == "Ana"
         assert len(patch_data["segments"]) == 1
-        assert "vtt" in patch_data["available_formats"]
+        assert len(patch_data["available_formats"]) >= 1
 
-        # Download VTT preserving dot in reunion.v2.vtt
+        # Download VTT on demand (generates and caches) preserving dot in reunion.v2.vtt
         vtt_resp = client.get(f"/api/v1/jobs/{job_id}/download/vtt")
         assert vtt_resp.status_code == 200
         assert 'filename="reunion.v2.vtt"' in vtt_resp.headers["content-disposition"]
@@ -689,3 +687,117 @@ def test_multitrack_mix_endpoints_generate_and_stream(tmp_path: Path) -> None:
         single_id = single_resp.json()["job"]["id"]
         bad_mix = client.post(f"/api/v1/jobs/{single_id}/mix")
         assert bad_mix.status_code == 422
+
+
+def test_generic_zip_in_single_and_batch_modes(tmp_path: Path) -> None:
+    app, stub = _build_jobs_test_app(tmp_path)
+    paths = DataPaths(tmp_path)
+
+    # Build a ZIP with 2 audio files inside a subfolder
+    multi_zip_buf = io.BytesIO()
+    with zipfile.ZipFile(multi_zip_buf, "w") as zf:
+        zf.writestr("folder/track1.wav", b"wav-1")
+        zf.writestr("folder/track2.mp3", b"mp3-2")
+    multi_zip_bytes = multi_zip_buf.getvalue()
+
+    # Build a ZIP with 1 audio file
+    single_zip_buf = io.BytesIO()
+    with zipfile.ZipFile(single_zip_buf, "w") as zf:
+        zf.writestr("nested/only.m4a", b"m4a-1")
+    single_zip_bytes = single_zip_buf.getvalue()
+
+    with TestClient(app) as client:
+        # 1. Batch mode with ZIP containing 2 files -> 2 independent batch jobs
+        batch_resp = client.post(
+            "/api/v1/jobs",
+            data={"mode": "batch", "profile_id": "es-tecnico"},
+            files=[("files", ("bundle.zip", multi_zip_bytes, "application/zip"))],
+        )
+        assert batch_resp.status_code == 201
+        batch_data = batch_resp.json()
+        assert len(batch_data["jobs"]) == 2
+        filenames = sorted(j["tracks"][0]["original_filename"] for j in batch_data["jobs"])
+        assert filenames == ["track1.wav", "track2.mp3"]
+
+        # 2. Single mode with ZIP containing 1 file -> succeeds
+        single_ok = client.post(
+            "/api/v1/jobs",
+            data={"mode": "single", "profile_id": "es-tecnico"},
+            files=[("files", ("one.zip", single_zip_bytes, "application/zip"))],
+        )
+        assert single_ok.status_code == 201
+        assert single_ok.json()["job"]["tracks"][0]["original_filename"] == "only.m4a"
+        assert (paths.root / single_ok.json()["job"]["tracks"][0]["media_relpath"]).is_file()
+
+        # 3. Single mode with ZIP containing 2 files -> 422
+        single_bad = client.post(
+            "/api/v1/jobs",
+            data={"mode": "single", "profile_id": "es-tecnico"},
+            files=[("files", ("two.zip", multi_zip_bytes, "application/zip"))],
+        )
+        assert single_bad.status_code == 422
+        assert len(stub.enqueued) == 3
+
+
+def test_zip_excluded_tracks_in_multitrack_batch_and_single_modes(tmp_path: Path) -> None:
+    app, _stub = _build_jobs_test_app(tmp_path)
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("session/alice.flac", b"alice-audio")
+        zf.writestr("session/bot.ogg", b"bot-audio")
+        zf.writestr("session/bob.wav", b"bob-audio")
+    zip_bytes = zip_buf.getvalue()
+
+    with TestClient(app) as client:
+        # 1. Multitrack mode excluding bot.ogg -> 2 tracks with aligned aliases/offsets
+        mt_resp = client.post(
+            "/api/v1/jobs",
+            data={
+                "mode": "multitrack",
+                "profile_id": "multipista-sync",
+                "overrides_json": json.dumps(
+                    {
+                        "excluded_tracks": ["session/bot.ogg"],
+                        "speaker_aliases": {"0": "Alicia", "1": "Roberto"},
+                        "track_offsets": {"0": 150, "1": 300},
+                    }
+                ),
+            },
+            files=[("files", ("session.zip", zip_bytes, "application/zip"))],
+        )
+        assert mt_resp.status_code == 201
+        mt_tracks = mt_resp.json()["job"]["tracks"]
+        assert [t["original_filename"] for t in mt_tracks] == ["alice.flac", "bob.wav"]
+        assert [t["offset_ms"] for t in mt_tracks] == [150, 300]
+        mt_speakers = {s["speaker_key"]: s["display_name"] for s in mt_resp.json()["job"]["speakers"]}
+        assert mt_speakers == {"SPEAKER_00": "Alicia", "SPEAKER_01": "Roberto"}
+
+        # 2. Batch mode excluding session/bot.ogg -> 2 independent batch jobs
+        batch_resp = client.post(
+            "/api/v1/jobs",
+            data={
+                "mode": "batch",
+                "profile_id": "es-tecnico",
+                "overrides_json": json.dumps({"excluded_tracks": ["session/bot.ogg"]}),
+            },
+            files=[("files", ("session.zip", zip_bytes, "application/zip"))],
+        )
+        assert batch_resp.status_code == 201
+        batch_files = sorted(j["tracks"][0]["original_filename"] for j in batch_resp.json()["jobs"])
+        assert batch_files == ["alice.flac", "bob.wav"]
+
+        # 3. Single mode excluding 2 of 3 tracks -> succeeds as single job
+        single_resp = client.post(
+            "/api/v1/jobs",
+            data={
+                "mode": "single",
+                "profile_id": "es-tecnico",
+                "overrides_json": json.dumps(
+                    {"excluded_tracks": ["session/bot.ogg", "session/bob.wav"]}
+                ),
+            },
+            files=[("files", ("session.zip", zip_bytes, "application/zip"))],
+        )
+        assert single_resp.status_code == 201
+        assert single_resp.json()["job"]["tracks"][0]["original_filename"] == "alice.flac"

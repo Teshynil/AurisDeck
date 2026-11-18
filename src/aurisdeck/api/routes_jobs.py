@@ -10,7 +10,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -50,6 +50,7 @@ from aurisdeck.domain.models import (
     validate_slug,
 )
 from aurisdeck.export.exporters import build_batch_zip
+from aurisdeck.export.job_outputs import ensure_job_output, invalidate_job_outputs
 from aurisdeck.media.ffmpeg import MediaInvalidError, mix_multitrack_audio
 from aurisdeck.media.ingest import ZipSlipError, unpack_multitrack_zip
 from aurisdeck.storage.paths import DataPaths, sanitize_filename
@@ -430,6 +431,12 @@ def _apply_config_overrides(
         cfg["track_offsets"] = {
             str(k): int(v) for k, v in overrides["track_offsets"].items()
         }
+    if isinstance(overrides.get("excluded_tracks"), list):
+        cfg["excluded_tracks"] = [
+            str(item).strip()
+            for item in overrides["excluded_tracks"]
+            if str(item).strip()
+        ]
 
     # Validate each section via domain schemas before snapshotting.
     input_cfg = ProfileInputConfig.model_validate(cfg["input"])
@@ -438,6 +445,7 @@ def _apply_config_overrides(
     diar_cfg = ProfileDiarizationConfig.model_validate(cfg["diarization"])
     ctx_cfg = ProfileContextConfig.model_validate(cfg["context"])
     hw_cfg = ProfileHardwareConfig.model_validate(cfg["hardware"])
+    explicit_formats = cfg["output"].get("formats") if "formats" in overrides else None
     out_cfg = ProfileOutputConfig.model_validate(cfg["output"])
 
     cfg["input"] = input_cfg.model_dump(mode="json")
@@ -447,6 +455,8 @@ def _apply_config_overrides(
     cfg["context"] = ctx_cfg.model_dump(mode="json")
     cfg["hardware"] = hw_cfg.model_dump(mode="json")
     cfg["output"] = out_cfg.model_dump(mode="json")
+    if explicit_formats is not None:
+        cfg["output"]["formats"] = list(explicit_formats)
 
     snapshot_profile = ProfileSchema(
         id="effective",
@@ -639,6 +649,7 @@ async def download_batch_zip(
     batch_id: str,
     paths: Annotated[DataPaths, Depends(get_paths)],
     job_repo: Annotated[JobRepo, Depends(get_job_repo)],
+    segment_repo: Annotated[SegmentRepo, Depends(get_segment_repo)],
     fmt: Annotated[str, Query()] = "vtt",
 ) -> FileResponse:
     """Build and download a ZIP archive containing completed outputs for a batch."""
@@ -665,6 +676,16 @@ async def download_batch_zip(
         if job.status not in _COMPLETED_JOB_STATUSES:
             continue
         found = _find_output_file(paths, job, normalized_fmt)
+        if found is None:
+            segments = segment_repo.list_segments(job.id)
+            found = await run_in_threadpool(
+                ensure_job_output,
+                paths,
+                job,
+                segments,
+                job.speakers,
+                normalized_fmt,
+            )
         if found is not None:
             output_files.append(found)
 
@@ -693,6 +714,43 @@ async def download_batch_zip(
 # ---------------------------------------------------------------------------
 # Collection routes (/api/v1/jobs)
 # ---------------------------------------------------------------------------
+
+
+async def _unpack_uploaded_zip(
+    upload: UploadFile,
+    paths: DataPaths,
+    extract_dir: Path,
+    *,
+    excluded_members: Collection[str] | None = None,
+) -> tuple[str, list[tuple[Path, Any]]]:
+    """Save an uploaded ZIP temporarily, safely extract supported media files, and return hints."""
+    tmp_upload_dir = paths.tmp / f"upload_{uuid.uuid4().hex}"
+    zip_name = sanitize_filename(upload.filename or "archive.zip")
+    zip_path = tmp_upload_dir / zip_name
+    try:
+        await _save_upload_file(upload, zip_path, paths.tmp)
+        extracted = await run_in_threadpool(
+            unpack_multitrack_zip,
+            zip_path,
+            extract_dir,
+            excluded_members=excluded_members,
+        )
+    except (ZipSlipError, MediaInvalidError, ValueError, zipfile.BadZipFile) as exc:
+        raise ApiError(
+            status_code=400,
+            error_code="INVALID_ARCHIVE",
+            detail=str(exc),
+        ) from exc
+    finally:
+        shutil.rmtree(tmp_upload_dir, ignore_errors=True)
+
+    if not extracted:
+        raise ApiError(
+            status_code=400,
+            error_code="INVALID_ARCHIVE",
+            detail="ZIP archive contains no supported audio/video tracks",
+        )
+    return zip_name, extracted
 
 
 @router.post("", status_code=201)
@@ -770,25 +828,47 @@ async def create_job(
     language_requested = effective_config["asr"].get("language")
     speaker_aliases = effective_config.get("speaker_aliases", {})
     track_offsets = effective_config.get("track_offsets", {})
+    excluded_tracks = effective_config.get("excluded_tracks", [])
 
     if normalized_mode == "batch":
         batch_id = uuid.uuid4().hex
         created_jobs: list[dict[str, Any]] = []
         created_ids: list[str] = []
+        tmp_batch_extract = paths.tmp / f"batch_extract_{uuid.uuid4().hex}"
         try:
+            batch_items: list[tuple[str, Path | None, UploadFile | None]] = []
             for upload in files:
+                safe_name = sanitize_filename(upload.filename or "audio")
+                if Path(safe_name).suffix.lower() == ".zip":
+                    extract_dir = tmp_batch_extract / uuid.uuid4().hex
+                    _zip_name, extracted = await _unpack_uploaded_zip(
+                        upload,
+                        paths,
+                        extract_dir,
+                        excluded_members=excluded_tracks,
+                    )
+                    for extracted_path, _hint in extracted:
+                        batch_items.append((extracted_path.name, extracted_path, None))
+                else:
+                    batch_items.append((safe_name, None, upload))
+
+            for safe_name, extracted_path, raw_upload in batch_items:
                 job_id = uuid.uuid4().hex
                 created_ids.append(job_id)
                 track_id = uuid.uuid4().hex
-                safe_name = sanitize_filename(upload.filename or "audio")
                 media_dir = paths.job_media_dir(job_id)
+                media_dir.mkdir(parents=True, exist_ok=True)
                 dest_path = media_dir / f"{track_id}_{safe_name}"
-                await _save_upload_file(upload, dest_path, paths.tmp)
+                if extracted_path is not None:
+                    os.replace(extracted_path, dest_path)
+                else:
+                    assert raw_upload is not None
+                    await _save_upload_file(raw_upload, dest_path, paths.tmp)
                 media_relpath = dest_path.relative_to(paths.root).as_posix()
 
                 job_title = (
                     _derive_job_title(title, safe_name, safe_name)
-                    if len(files) == 1
+                    if len(batch_items) == 1
                     else _derive_job_title(None, safe_name, safe_name)
                 )
                 job_repo.create_job(
@@ -824,12 +904,14 @@ async def create_job(
                 await run_in_threadpool(coordinator.enqueue_job, job_id)
                 refreshed = job_repo.get_job(job_id)
                 assert refreshed is not None
-                created_jobs.append(_serialize_job(refreshed))
+                created_jobs.append(_serialize_job(refreshed, paths=paths))
         except Exception:
             for jid in created_ids:
                 job_repo.delete_job(jid)
                 _cleanup_job_dirs(paths, jid)
             raise
+        finally:
+            shutil.rmtree(tmp_batch_extract, ignore_errors=True)
 
         return {
             "batch_id": batch_id,
@@ -843,9 +925,32 @@ async def create_job(
         upload = files[0]
         track_id = uuid.uuid4().hex
         safe_name = sanitize_filename(upload.filename or "audio")
-        dest_path = media_dir / f"{track_id}_{safe_name}"
         try:
-            await _save_upload_file(upload, dest_path, paths.tmp)
+            if Path(safe_name).suffix.lower() == ".zip":
+                tmp_single_extract = paths.tmp / f"single_extract_{uuid.uuid4().hex}"
+                try:
+                    _zip_name, extracted = await _unpack_uploaded_zip(
+                        upload,
+                        paths,
+                        tmp_single_extract,
+                        excluded_members=excluded_tracks,
+                    )
+                    if len(extracted) > 1:
+                        raise ApiError(
+                            status_code=422,
+                            error_code="VALIDATION_ERROR",
+                            detail="ZIP archive contains multiple tracks; use multitrack or batch mode",
+                        )
+                    extracted_path, _hint = extracted[0]
+                    safe_name = extracted_path.name
+                    media_dir.mkdir(parents=True, exist_ok=True)
+                    dest_path = media_dir / f"{track_id}_{safe_name}"
+                    os.replace(extracted_path, dest_path)
+                finally:
+                    shutil.rmtree(tmp_single_extract, ignore_errors=True)
+            else:
+                dest_path = media_dir / f"{track_id}_{safe_name}"
+                await _save_upload_file(upload, dest_path, paths.tmp)
             media_relpath = dest_path.relative_to(paths.root).as_posix()
             job_title = _derive_job_title(title, safe_name, "Transcription")
 
@@ -890,93 +995,80 @@ async def create_job(
         return {**serialized, "job": serialized, "jobs": [serialized]}
 
     # mode == "multitrack"
-    is_zip_upload = len(files) == 1 and Path(files[0].filename or "").suffix.lower() == ".zip"
     pending_tracks: list[tuple[int, str, str, str, int, str, str]] = []
     # Tuple fields: (idx, track_id, original_filename, media_relpath, offset_ms, speaker_key, display_name)
 
     try:
-        if is_zip_upload:
-            upload = files[0]
-            tmp_upload_dir = paths.tmp / f"upload_{uuid.uuid4().hex}"
-            zip_name = sanitize_filename(upload.filename or "multitrack.zip")
-            zip_path = tmp_upload_dir / zip_name
-            try:
-                await _save_upload_file(upload, zip_path, paths.tmp)
-                extracted = await run_in_threadpool(unpack_multitrack_zip, zip_path, media_dir)
-            except (ZipSlipError, MediaInvalidError, ValueError, zipfile.BadZipFile) as exc:
-                raise ApiError(
-                    status_code=400,
-                    error_code="INVALID_ARCHIVE",
-                    detail=str(exc),
-                ) from exc
-            finally:
-                shutil.rmtree(tmp_upload_dir, ignore_errors=True)
-
-            if not extracted:
-                raise ApiError(
-                    status_code=400,
-                    error_code="INVALID_ARCHIVE",
-                    detail="ZIP archive contains no supported audio/video tracks",
-                )
-
-            job_title = _derive_job_title(title, zip_name, "Multitrack")
-            for idx, (extracted_path, hint) in enumerate(extracted):
-                track_id = uuid.uuid4().hex
-                speaker_key = f"SPEAKER_{idx:02d}"
-                safe_name = extracted_path.name
-                final_path = media_dir / f"{track_id}_{safe_name}"
-                os.replace(extracted_path, final_path)
-                media_relpath = final_path.relative_to(paths.root).as_posix()
-
-                lookup_keys = (
-                    safe_name,
-                    Path(safe_name).stem,
-                    str(idx),
-                    speaker_key,
-                    hint.speaker_name,
-                )
+        first_name = sanitize_filename(files[0].filename or "multitrack")
+        job_title = _derive_job_title(title, first_name, "Multitrack")
+        track_idx = 0
+        for upload in files:
+            safe_upload_name = sanitize_filename(upload.filename or f"track_{track_idx}")
+            if Path(safe_upload_name).suffix.lower() == ".zip":
+                extract_dir = media_dir / f"_zip_{uuid.uuid4().hex}"
                 try:
-                    resolved_name = _resolve_track_speaker_name(
-                        speaker_aliases,
-                        default_name=hint.speaker_name or Path(safe_name).stem or speaker_key,
-                        keys=lookup_keys,
+                    _zip_name, extracted = await _unpack_uploaded_zip(
+                        upload,
+                        paths,
+                        extract_dir,
+                        excluded_members=excluded_tracks,
                     )
-                    resolved_offset = _resolve_track_offset_ms(
-                        track_offsets,
-                        default_offset_ms=hint.offset_ms,
-                        keys=lookup_keys,
-                    )
-                except (ValueError, TypeError) as exc:
-                    raise ApiError(
-                        status_code=422,
-                        error_code="VALIDATION_ERROR",
-                        detail=str(exc),
-                    ) from exc
+                    for extracted_path, hint in extracted:
+                        track_id = uuid.uuid4().hex
+                        speaker_key = f"SPEAKER_{track_idx:02d}"
+                        safe_name = extracted_path.name
+                        final_path = media_dir / f"{track_id}_{safe_name}"
+                        os.replace(extracted_path, final_path)
+                        media_relpath = final_path.relative_to(paths.root).as_posix()
 
-                pending_tracks.append(
-                    (
-                        idx,
-                        track_id,
-                        safe_name,
-                        media_relpath,
-                        resolved_offset,
-                        speaker_key,
-                        resolved_name,
-                    )
-                )
-        else:
-            first_name = sanitize_filename(files[0].filename or "multitrack")
-            job_title = _derive_job_title(title, first_name, "Multitrack")
-            for idx, upload in enumerate(files):
+                        lookup_keys = (
+                            safe_name,
+                            Path(safe_name).stem,
+                            str(track_idx),
+                            speaker_key,
+                            hint.speaker_name,
+                        )
+                        try:
+                            resolved_name = _resolve_track_speaker_name(
+                                speaker_aliases,
+                                default_name=hint.speaker_name or Path(safe_name).stem or speaker_key,
+                                keys=lookup_keys,
+                            )
+                            resolved_offset = _resolve_track_offset_ms(
+                                track_offsets,
+                                default_offset_ms=hint.offset_ms,
+                                keys=lookup_keys,
+                            )
+                        except (ValueError, TypeError) as exc:
+                            raise ApiError(
+                                status_code=422,
+                                error_code="VALIDATION_ERROR",
+                                detail=str(exc),
+                            ) from exc
+
+                        pending_tracks.append(
+                            (
+                                track_idx,
+                                track_id,
+                                safe_name,
+                                media_relpath,
+                                resolved_offset,
+                                speaker_key,
+                                resolved_name,
+                            )
+                        )
+                        track_idx += 1
+                finally:
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+            else:
                 track_id = uuid.uuid4().hex
-                speaker_key = f"SPEAKER_{idx:02d}"
-                safe_name = sanitize_filename(upload.filename or f"track_{idx}")
-                dest_path = media_dir / f"{track_id}_{safe_name}"
+                speaker_key = f"SPEAKER_{track_idx:02d}"
+                dest_path = media_dir / f"{track_id}_{safe_upload_name}"
                 await _save_upload_file(upload, dest_path, paths.tmp)
                 media_relpath = dest_path.relative_to(paths.root).as_posix()
 
-                stem_name = Path(safe_name).stem or speaker_key
-                lookup_keys = (safe_name, stem_name, str(idx), speaker_key)
+                stem_name = Path(safe_upload_name).stem or speaker_key
+                lookup_keys = (safe_upload_name, stem_name, str(track_idx), speaker_key)
                 try:
                     resolved_name = _resolve_track_speaker_name(
                         speaker_aliases,
@@ -997,15 +1089,16 @@ async def create_job(
 
                 pending_tracks.append(
                     (
-                        idx,
+                        track_idx,
                         track_id,
-                        safe_name,
+                        safe_upload_name,
                         media_relpath,
                         resolved_offset,
                         speaker_key,
                         resolved_name,
                     )
                 )
+                track_idx += 1
 
         job_repo.create_job(
             title=job_title,
@@ -1149,9 +1242,10 @@ async def retry_job(
             update_language=True,
         )
 
+    invalidate_job_outputs(paths, job_id)
     await run_in_threadpool(coordinator.retry_job, job_id)
     updated = _get_job_or_404(job_repo, job_id)
-    serialized = _serialize_job(updated)
+    serialized = _serialize_job(updated, paths=paths)
     return {**serialized, "job": serialized}
 
 
@@ -1183,6 +1277,7 @@ async def diarize_job(
         _update_job_effective_config(paths, job_id, updated_cfg)
 
     try:
+        invalidate_job_outputs(paths, job_id)
         await run_in_threadpool(coordinator.trigger_diarize, job_id)
     except ValueError as exc:
         raise ApiError(
@@ -1192,7 +1287,7 @@ async def diarize_job(
         ) from exc
 
     updated = _get_job_or_404(job_repo, job_id)
-    serialized = _serialize_job(updated)
+    serialized = _serialize_job(updated, paths=paths)
     return {**serialized, "job": serialized}
 
 
@@ -1417,6 +1512,7 @@ async def download_job_output(
     fmt: str,
     paths: Annotated[DataPaths, Depends(get_paths)],
     job_repo: Annotated[JobRepo, Depends(get_job_repo)],
+    segment_repo: Annotated[SegmentRepo, Depends(get_segment_repo)],
 ) -> FileResponse:
     """Download a rendered transcript file (.vtt, .srt, .md, .json) preserving filename dots."""
     normalized_fmt = fmt.strip().lower().lstrip(".")
@@ -1430,6 +1526,17 @@ async def download_job_output(
 
     job = _get_job_or_404(job_repo, job_id)
     resolved = _find_output_file(paths, job, normalized_fmt)
+    if resolved is None:
+        segments = segment_repo.list_segments(job_id)
+        if segments or job.status in _COMPLETED_JOB_STATUSES:
+            resolved = await run_in_threadpool(
+                ensure_job_output,
+                paths,
+                job,
+                segments,
+                job.speakers,
+                normalized_fmt,
+            )
     if resolved is None:
         raise ApiError(
             status_code=404,

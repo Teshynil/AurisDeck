@@ -6,9 +6,12 @@
 import { api } from "../api.js";
 import { i18n } from "../i18n.js";
 import { store } from "../store.js";
+import { inspectLocalZipFile, supportsLocalZipInspection } from "../zip_inspect.js";
 
-const ACCEPTED_EXTENSIONS =
-  ".m4a,.mp3,.wav,.flac,.ogg,.opus,.aac,.mp4,.mkv,.webm,.mov,.zip";
+const ZIP_SUPPORTED = supportsLocalZipInspection();
+const ACCEPTED_EXTENSIONS = ZIP_SUPPORTED
+  ? ".m4a,.mp3,.wav,.flac,.ogg,.opus,.aac,.mp4,.mkv,.webm,.mov,.zip"
+  : ".m4a,.mp3,.wav,.flac,.ogg,.opus,.aac,.mp4,.mkv,.webm,.mov";
 
 const ACTIVE_STATUSES = new Set([
   "queued",
@@ -29,11 +32,13 @@ const TERMINAL_STATUSES = new Set([
   "failed",
 ]);
 
-const MODE_IDS = ["single", "diarize", "multitrack", "batch"];
+const MULTI_MODE_IDS = ["multitrack", "batch"];
 
 const formState = {
   files: [],
+  resolvedEntries: [],
   uiMode: "single",
+  diarizeEnabled: null,
   minSpeakers: "",
   maxSpeakers: "",
   profileId: "",
@@ -134,107 +139,175 @@ function resolveGenerateMix(profiles, profileId) {
   return Boolean(active?.preprocessing?.generate_mix);
 }
 
-function isSingleZipSelection(files) {
-  return (
-    files.length === 1 &&
-    String(files[0]?.name || "").toLowerCase().endsWith(".zip")
-  );
+function resolveDiarizeEnabled(profiles, profileId) {
+  if (formState.diarizeEnabled !== null) {
+    return Boolean(formState.diarizeEnabled);
+  }
+  const active = profiles.find((p) => p.id === profileId);
+  return Boolean(active?.diarization?.enabled);
 }
 
 function fileIdentity(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
-async function syncMultitrackRows() {
-  if (formState.uiMode !== "multitrack") {
+function getActiveEntries() {
+  return formState.resolvedEntries.filter((entry) => entry.included !== false);
+}
+
+function getExcludedZipTracks() {
+  return formState.resolvedEntries.filter(
+    (entry) => entry.sourceType === "zip" && entry.included === false
+  );
+}
+
+function syncModeFromActiveEntries() {
+  const activeCount = getActiveEntries().length;
+  if (activeCount === 1) {
+    formState.uiMode = "single";
+  } else if (
+    activeCount >= 2 &&
+    formState.uiMode !== "multitrack" &&
+    formState.uiMode !== "batch"
+  ) {
+    formState.uiMode = "multitrack";
+  }
+}
+
+function setEntryIncluded(entryId, included) {
+  let changed = false;
+  for (const entry of formState.resolvedEntries) {
+    if (entry.id === entryId && entry.included !== included) {
+      entry.included = included;
+      changed = true;
+    }
+  }
+  for (const row of formState.multitrackRows) {
+    if (row.id === entryId && row.included !== included) {
+      row.included = included;
+      changed = true;
+    }
+  }
+  if (!changed) {
     return;
   }
+  formState.submitError = "";
+  syncModeFromActiveEntries();
+  renderComposer();
+}
 
+async function analyzeSelectedFiles() {
   const files = formState.files;
   if (!files.length) {
+    formState.resolvedEntries = [];
     formState.multitrackRows = [];
     formState.inspectKey = "";
     formState.inspectStatus = "idle";
     formState.inspectError = "";
+    formState.uiMode = "single";
     return;
   }
 
-  if (isSingleZipSelection(files)) {
-    const zipFile = files[0];
-    const key = fileIdentity(zipFile);
-    if (formState.inspectKey === key && formState.inspectStatus !== "idle") {
+  const key = files.map(fileIdentity).join("|");
+  if (formState.inspectKey === key && formState.inspectStatus === "done") {
+    return;
+  }
+
+  formState.inspectKey = key;
+  const hasZip = files.some((f) => String(f.name || "").toLowerCase().endsWith(".zip"));
+  if (hasZip && !ZIP_SUPPORTED) {
+    formState.inspectStatus = "error";
+    formState.inspectError = i18n.t("errors.INVALID_ARCHIVE");
+    formState.resolvedEntries = [];
+    formState.multitrackRows = [];
+    renderComposer();
+    return;
+  }
+
+  if (hasZip) {
+    formState.inspectStatus = "loading";
+    formState.inspectError = "";
+    renderComposer();
+  }
+
+  try {
+    const existingById = new Map(
+      formState.multitrackRows.map((row) => [row.id, row])
+    );
+    const resolved = [];
+    for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
+      const file = files[fileIdx];
+      if (String(file.name || "").toLowerCase().endsWith(".zip")) {
+        const { entries } = await inspectLocalZipFile(file);
+        if (formState.inspectKey !== key) {
+          return;
+        }
+        for (const entry of entries) {
+          const id = `zip:${fileIdx}:${entry.path}`;
+          const prev = existingById.get(id);
+          resolved.push({
+            id,
+            sourceType: "zip",
+            zipPath: entry.path,
+            filename: entry.filename,
+            speaker_name: prev?.speaker_name ?? stripExtension(entry.filename),
+            offset_ms: prev?.offset_ms ?? 0,
+            included: prev ? prev.included !== false : true,
+          });
+        }
+      } else {
+        const id = `file:${fileIdx}:${file.name}`;
+        const prev = existingById.get(id);
+        resolved.push({
+          id,
+          sourceType: "file",
+          zipPath: "",
+          filename: file.name,
+          speaker_name: prev?.speaker_name ?? stripExtension(file.name),
+          offset_ms: prev?.offset_ms ?? 0,
+          included: prev ? prev.included !== false : true,
+        });
+      }
+    }
+
+    if (formState.inspectKey !== key) {
       return;
     }
 
-    formState.inspectKey = key;
-    formState.inspectStatus = "loading";
-    formState.inspectError = "";
-    formState.multitrackRows = [];
-    renderComposer();
-
-    try {
-      const fd = new FormData();
-      fd.append("file", zipFile);
-      const tracks = await api.inspectZip(fd);
-      if (formState.inspectKey !== key) {
-        return;
-      }
-      const list = Array.isArray(tracks) ? tracks : [];
-      formState.multitrackRows = list.map((item) => ({
-        filename: String(item.filename || ""),
-        speaker_name: String(item.speaker_name || stripExtension(item.filename || "")),
-        offset_ms: Math.max(0, Number(item.offset_ms || 0)),
-      }));
-      formState.inspectStatus = "done";
-    } catch (err) {
-      if (formState.inspectKey !== key) {
-        return;
-      }
+    if (resolved.length === 0) {
       formState.inspectStatus = "error";
-      formState.inspectError = i18n.translateError(err);
+      formState.inspectError = i18n.t("errors.INVALID_ARCHIVE");
+      formState.resolvedEntries = [];
       formState.multitrackRows = [];
+      renderComposer();
+      return;
     }
-    renderComposer();
-    return;
+
+    formState.resolvedEntries = resolved;
+    formState.inspectStatus = "done";
+    formState.inspectError = "";
+    formState.multitrackRows = resolved.map((entry) => ({ ...entry }));
+    syncModeFromActiveEntries();
+  } catch (err) {
+    if (formState.inspectKey !== key) {
+      return;
+    }
+    formState.inspectStatus = "error";
+    formState.inspectError = err?.message || i18n.t("errors.INVALID_ARCHIVE");
+    formState.resolvedEntries = [];
+    formState.multitrackRows = [];
   }
-
-  formState.inspectKey = "";
-  formState.inspectStatus = "done";
-  formState.inspectError = "";
-
-  const existingByName = new Map(
-    formState.multitrackRows.map((row) => [row.filename, row])
-  );
-  formState.multitrackRows = files.map((file) => {
-    const prev = existingByName.get(file.name);
-    if (prev) {
-      return { ...prev };
-    }
-    return {
-      filename: file.name,
-      speaker_name: stripExtension(file.name),
-      offset_ms: 0,
-    };
-  });
+  renderComposer();
 }
 
 function handleSelectedFiles(fileList) {
   const nextFiles = Array.from(fileList || []);
   formState.files = nextFiles;
   formState.submitError = "";
-
-  if (
-    isSingleZipSelection(nextFiles) &&
-    (formState.uiMode === "single" || formState.uiMode === "diarize")
-  ) {
-    formState.uiMode = "multitrack";
-  }
-
-  if (formState.uiMode === "multitrack") {
-    void syncMultitrackRows().then(() => renderComposer());
-  } else {
-    renderComposer();
-  }
+  formState.inspectKey = "";
+  formState.inspectStatus = "idle";
+  formState.inspectError = "";
+  void analyzeSelectedFiles().then(() => renderComposer());
 }
 
 function addHotwordsFromRaw(rawText) {
@@ -302,40 +375,62 @@ async function handleSubmit() {
     return;
   }
 
-  const backendMode = formState.uiMode === "diarize" ? "single" : formState.uiMode;
-  if (backendMode === "single" && formState.files.length !== 1) {
-    formState.submitError = i18n.t("errors.VALIDATION_ERROR");
+  if (formState.inspectStatus === "loading") {
+    return;
+  }
+  if (formState.inspectError || formState.resolvedEntries.length === 0) {
+    formState.submitError = formState.inspectError || i18n.t("errors.INVALID_ARCHIVE");
     renderComposer();
     return;
   }
 
+  const activeEntries = getActiveEntries();
+  if (activeEntries.length === 0) {
+    formState.submitError = i18n.t("simple.no_active_tracks");
+    renderComposer();
+    return;
+  }
+
+  const profiles = getSimpleProfiles();
+  const profileId = resolveDefaultProfileId(profiles);
+  formState.profileId = profileId;
+
+  const totalTracks = activeEntries.length;
+  const backendMode =
+    totalTracks === 1
+      ? "single"
+      : formState.uiMode === "batch"
+        ? "batch"
+        : "multitrack";
+
   const overrides = {};
-  if (formState.uiMode === "single") {
-    overrides.diarize = false;
-  } else if (formState.uiMode === "diarize") {
-    overrides.diarize = true;
-    const minVal = formState.minSpeakers !== "" ? Number(formState.minSpeakers) : null;
-    const maxVal = formState.maxSpeakers !== "" ? Number(formState.maxSpeakers) : null;
-    if (minVal !== null && (!Number.isInteger(minVal) || minVal < 1)) {
-      formState.submitError = i18n.t("errors.VALIDATION_ERROR");
-      renderComposer();
-      return;
-    }
-    if (maxVal !== null && (!Number.isInteger(maxVal) || maxVal < 1)) {
-      formState.submitError = i18n.t("errors.VALIDATION_ERROR");
-      renderComposer();
-      return;
-    }
-    if (minVal !== null && maxVal !== null && maxVal < minVal) {
-      formState.submitError = i18n.t("errors.VALIDATION_ERROR");
-      renderComposer();
-      return;
-    }
-    if (minVal !== null) {
-      overrides.min_speakers = minVal;
-    }
-    if (maxVal !== null) {
-      overrides.max_speakers = maxVal;
+  if (backendMode === "single") {
+    const diarizeOn = resolveDiarizeEnabled(profiles, profileId);
+    overrides.diarize = diarizeOn;
+    if (diarizeOn) {
+      const minVal = formState.minSpeakers !== "" ? Number(formState.minSpeakers) : null;
+      const maxVal = formState.maxSpeakers !== "" ? Number(formState.maxSpeakers) : null;
+      if (minVal !== null && (!Number.isInteger(minVal) || minVal < 1)) {
+        formState.submitError = i18n.t("errors.VALIDATION_ERROR");
+        renderComposer();
+        return;
+      }
+      if (maxVal !== null && (!Number.isInteger(maxVal) || maxVal < 1)) {
+        formState.submitError = i18n.t("errors.VALIDATION_ERROR");
+        renderComposer();
+        return;
+      }
+      if (minVal !== null && maxVal !== null && maxVal < minVal) {
+        formState.submitError = i18n.t("errors.VALIDATION_ERROR");
+        renderComposer();
+        return;
+      }
+      if (minVal !== null) {
+        overrides.min_speakers = minVal;
+      }
+      if (maxVal !== null) {
+        overrides.max_speakers = maxVal;
+      }
     }
   }
 
@@ -343,10 +438,11 @@ async function handleSubmit() {
     overrides.extra_hotwords = [...formState.hotwords];
   }
 
-  if (formState.uiMode === "multitrack" && formState.multitrackRows.length > 0) {
+  const activeRows = formState.multitrackRows.filter((row) => row.included !== false);
+  if (backendMode === "multitrack" && activeRows.length > 0) {
     const speakerAliases = {};
     const trackOffsets = {};
-    formState.multitrackRows.forEach((row, idx) => {
+    activeRows.forEach((row, idx) => {
       const speaker = String(row.speaker_name || "").trim();
       const offset = Math.max(0, Math.round(Number(row.offset_ms || 0)));
       if (speaker) {
@@ -368,11 +464,14 @@ async function handleSubmit() {
     }
   }
 
-  const profiles = getSimpleProfiles();
-  const profileId = resolveDefaultProfileId(profiles);
-  formState.profileId = profileId;
+  const excludedZipPaths = getExcludedZipTracks()
+    .map((entry) => entry.zipPath)
+    .filter(Boolean);
+  if (excludedZipPaths.length > 0) {
+    overrides.excluded_tracks = excludedZipPaths;
+  }
 
-  if (formState.uiMode === "multitrack") {
+  if (backendMode === "multitrack") {
     overrides.preprocessing = {
       ...(overrides.preprocessing || {}),
       generate_mix: resolveGenerateMix(profiles, profileId),
@@ -402,7 +501,10 @@ async function handleSubmit() {
     upsertReturnedJobs(result);
 
     formState.files = [];
+    formState.resolvedEntries = [];
     formState.title = "";
+    formState.generateMix = null;
+    formState.diarizeEnabled = null;
     formState.hotwords = [];
     formState.hotwordDraft = "";
     formState.multitrackRows = [];
@@ -572,12 +674,8 @@ function buildDropzoneBlock() {
       removeBtn.textContent = "×";
       removeBtn.setAttribute("aria-label", i18n.t("common.delete"));
       removeBtn.addEventListener("click", () => {
-        formState.files = formState.files.filter((_, idx) => idx !== index);
-        if (formState.uiMode === "multitrack") {
-          void syncMultitrackRows().then(() => renderComposer());
-        } else {
-          renderComposer();
-        }
+        const remaining = formState.files.filter((_, idx) => idx !== index);
+        handleSelectedFiles(remaining);
       });
 
       item.appendChild(info);
@@ -588,10 +686,105 @@ function buildDropzoneBlock() {
     block.appendChild(list);
   }
 
+  if (formState.inspectStatus === "loading") {
+    const loadingEl = document.createElement("div");
+    loadingEl.className = "help-text";
+    loadingEl.textContent = i18n.t("common.loading");
+    block.appendChild(loadingEl);
+  } else if (formState.inspectStatus === "error" && formState.inspectError) {
+    const errEl = document.createElement("div");
+    errEl.className = "form-error";
+    errEl.textContent = formState.inspectError;
+    block.appendChild(errEl);
+  }
+
   return block;
 }
 
 function buildModeSelectorBlock() {
+  const activeCount = getActiveEntries().length;
+  if (!formState.files.length || activeCount === 0) {
+    return null;
+  }
+
+  const profiles = getSimpleProfiles();
+  const activeProfileId = resolveDefaultProfileId(profiles);
+
+  if (activeCount === 1) {
+    const block = document.createElement("div");
+    block.className = "form-group";
+
+    const diarizeOn = resolveDiarizeEnabled(profiles, activeProfileId);
+    const toggleLabel = document.createElement("label");
+    toggleLabel.className = "checkbox-label";
+
+    const toggleInput = document.createElement("input");
+    toggleInput.id = "simple-diarize-toggle";
+    toggleInput.type = "checkbox";
+    toggleInput.checked = diarizeOn;
+    toggleInput.addEventListener("change", (event) => {
+      formState.diarizeEnabled = Boolean(event.target.checked);
+      renderComposer();
+    });
+
+    const toggleText = document.createElement("span");
+    toggleText.textContent = i18n.t("simple.modes.diarize.title");
+
+    toggleLabel.appendChild(toggleInput);
+    toggleLabel.appendChild(toggleText);
+    block.appendChild(toggleLabel);
+
+    if (diarizeOn) {
+      const speakerGrid = document.createElement("div");
+      speakerGrid.className = "form-grid";
+      speakerGrid.style.marginTop = "0.5rem";
+
+      const minGroup = document.createElement("div");
+      minGroup.className = "form-group";
+      const minLabel = document.createElement("label");
+      minLabel.className = "label";
+      minLabel.setAttribute("for", "simple-min-speakers");
+      minLabel.textContent = `${i18n.t("simple.min_speakers")} (${i18n.t("common.optional")})`;
+      const minInput = document.createElement("input");
+      minInput.id = "simple-min-speakers";
+      minInput.className = "input";
+      minInput.type = "number";
+      minInput.min = "1";
+      minInput.max = "32";
+      minInput.value = formState.minSpeakers;
+      minInput.addEventListener("input", (event) => {
+        formState.minSpeakers = event.target.value;
+      });
+      minGroup.appendChild(minLabel);
+      minGroup.appendChild(minInput);
+
+      const maxGroup = document.createElement("div");
+      maxGroup.className = "form-group";
+      const maxLabel = document.createElement("label");
+      maxLabel.className = "label";
+      maxLabel.setAttribute("for", "simple-max-speakers");
+      maxLabel.textContent = `${i18n.t("simple.max_speakers")} (${i18n.t("common.optional")})`;
+      const maxInput = document.createElement("input");
+      maxInput.id = "simple-max-speakers";
+      maxInput.className = "input";
+      maxInput.type = "number";
+      maxInput.min = "1";
+      maxInput.max = "32";
+      maxInput.value = formState.maxSpeakers;
+      maxInput.addEventListener("input", (event) => {
+        formState.maxSpeakers = event.target.value;
+      });
+      maxGroup.appendChild(maxLabel);
+      maxGroup.appendChild(maxInput);
+
+      speakerGrid.appendChild(minGroup);
+      speakerGrid.appendChild(maxGroup);
+      block.appendChild(speakerGrid);
+    }
+
+    return block;
+  }
+
   const block = document.createElement("div");
   block.className = "form-group";
 
@@ -603,7 +796,7 @@ function buildModeSelectorBlock() {
   const grid = document.createElement("div");
   grid.className = "mode-grid";
 
-  for (const modeId of MODE_IDS) {
+  for (const modeId of MULTI_MODE_IDS) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className =
@@ -627,66 +820,13 @@ function buildModeSelectorBlock() {
       }
       formState.uiMode = modeId;
       formState.submitError = "";
-      if (modeId === "multitrack") {
-        void syncMultitrackRows().then(() => renderComposer());
-      } else {
-        renderComposer();
-      }
+      renderComposer();
     });
 
     grid.appendChild(btn);
   }
 
   block.appendChild(grid);
-
-  if (formState.uiMode === "diarize") {
-    const speakerGrid = document.createElement("div");
-    speakerGrid.className = "form-grid";
-    speakerGrid.style.marginTop = "0.5rem";
-
-    const minGroup = document.createElement("div");
-    minGroup.className = "form-group";
-    const minLabel = document.createElement("label");
-    minLabel.className = "label";
-    minLabel.setAttribute("for", "simple-min-speakers");
-    minLabel.textContent = `${i18n.t("simple.min_speakers")} (${i18n.t("common.optional")})`;
-    const minInput = document.createElement("input");
-    minInput.id = "simple-min-speakers";
-    minInput.className = "input";
-    minInput.type = "number";
-    minInput.min = "1";
-    minInput.max = "32";
-    minInput.value = formState.minSpeakers;
-    minInput.addEventListener("input", (event) => {
-      formState.minSpeakers = event.target.value;
-    });
-    minGroup.appendChild(minLabel);
-    minGroup.appendChild(minInput);
-
-    const maxGroup = document.createElement("div");
-    maxGroup.className = "form-group";
-    const maxLabel = document.createElement("label");
-    maxLabel.className = "label";
-    maxLabel.setAttribute("for", "simple-max-speakers");
-    maxLabel.textContent = `${i18n.t("simple.max_speakers")} (${i18n.t("common.optional")})`;
-    const maxInput = document.createElement("input");
-    maxInput.id = "simple-max-speakers";
-    maxInput.className = "input";
-    maxInput.type = "number";
-    maxInput.min = "1";
-    maxInput.max = "32";
-    maxInput.value = formState.maxSpeakers;
-    maxInput.addEventListener("input", (event) => {
-      formState.maxSpeakers = event.target.value;
-    });
-    maxGroup.appendChild(maxLabel);
-    maxGroup.appendChild(maxInput);
-
-    speakerGrid.appendChild(minGroup);
-    speakerGrid.appendChild(maxGroup);
-    block.appendChild(speakerGrid);
-  }
-
   return block;
 }
 
@@ -714,7 +854,8 @@ function buildMultitrackTableBlock() {
     return wrapper;
   }
 
-  if (!formState.multitrackRows.length) {
+  const activeRows = formState.multitrackRows.filter((row) => row.included !== false);
+  if (!activeRows.length) {
     return null;
   }
 
@@ -735,11 +876,14 @@ function buildMultitrackTableBlock() {
     th.textContent = i18n.t(key);
     headRow.appendChild(th);
   }
+  const actionTh = document.createElement("th");
+  actionTh.setAttribute("aria-label", i18n.t("simple.discard_track"));
+  headRow.appendChild(actionTh);
   thead.appendChild(headRow);
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  formState.multitrackRows.forEach((row, index) => {
+  activeRows.forEach((row) => {
     const tr = document.createElement("tr");
 
     const fileCell = document.createElement("td");
@@ -756,7 +900,7 @@ function buildMultitrackTableBlock() {
       `${i18n.t("simple.multitrack_table.speaker_name")} (${row.filename})`
     );
     speakerInput.addEventListener("input", (event) => {
-      formState.multitrackRows[index].speaker_name = event.target.value;
+      row.speaker_name = event.target.value;
     });
     speakerCell.appendChild(speakerInput);
 
@@ -773,20 +917,146 @@ function buildMultitrackTableBlock() {
     );
     offsetInput.addEventListener("input", (event) => {
       const parsed = Number(event.target.value);
-      formState.multitrackRows[index].offset_ms =
+      row.offset_ms =
         Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : 0;
     });
     offsetCell.appendChild(offsetInput);
 
+    const actionCell = document.createElement("td");
+    if (row.sourceType === "zip") {
+      const discardBtn = document.createElement("button");
+      discardBtn.type = "button";
+      discardBtn.className = "btn btn-ghost btn-sm";
+      discardBtn.textContent = "×";
+      discardBtn.title = i18n.t("simple.discard_track");
+      discardBtn.setAttribute(
+        "aria-label",
+        `${i18n.t("simple.discard_track")}: ${row.filename}`
+      );
+      discardBtn.addEventListener("click", () => {
+        setEntryIncluded(row.id, false);
+      });
+      actionCell.appendChild(discardBtn);
+    }
+
     tr.appendChild(fileCell);
     tr.appendChild(speakerCell);
     tr.appendChild(offsetCell);
+    tr.appendChild(actionCell);
     tbody.appendChild(tr);
   });
 
   table.appendChild(tbody);
   tableWrap.appendChild(table);
   wrapper.appendChild(tableWrap);
+  return wrapper;
+}
+
+function buildZipTracksBlock() {
+  if (!formState.files.length || formState.inspectStatus !== "done") {
+    return null;
+  }
+
+  const zipEntries = formState.resolvedEntries.filter(
+    (entry) => entry.sourceType === "zip"
+  );
+  if (!zipEntries.length) {
+    return null;
+  }
+
+  const activeZipTracks = zipEntries.filter((entry) => entry.included !== false);
+  const excludedZipTracks = zipEntries.filter((entry) => entry.included === false);
+  const showActiveZipList =
+    formState.uiMode !== "multitrack" &&
+    (formState.uiMode === "batch" || excludedZipTracks.length > 0) &&
+    activeZipTracks.length > 0;
+
+  if (!showActiveZipList && excludedZipTracks.length === 0) {
+    return null;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "stack";
+
+  if (showActiveZipList) {
+    const group = document.createElement("div");
+    group.className = "form-group";
+
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = i18n.t("simple.zip_tracks_label");
+    group.appendChild(label);
+
+    const list = document.createElement("div");
+    list.className = "file-list";
+
+    for (const entry of activeZipTracks) {
+      const item = document.createElement("div");
+      item.className = "file-item";
+
+      const nameEl = document.createElement("span");
+      nameEl.className = "mono";
+      nameEl.textContent = entry.zipPath || entry.filename;
+
+      const discardBtn = document.createElement("button");
+      discardBtn.type = "button";
+      discardBtn.className = "btn btn-ghost btn-sm";
+      discardBtn.textContent = "×";
+      discardBtn.title = i18n.t("simple.discard_track");
+      discardBtn.setAttribute(
+        "aria-label",
+        `${i18n.t("simple.discard_track")}: ${entry.filename}`
+      );
+      discardBtn.addEventListener("click", () => {
+        setEntryIncluded(entry.id, false);
+      });
+
+      item.appendChild(nameEl);
+      item.appendChild(discardBtn);
+      list.appendChild(item);
+    }
+
+    group.appendChild(list);
+    wrapper.appendChild(group);
+  }
+
+  if (excludedZipTracks.length > 0) {
+    const group = document.createElement("div");
+    group.className = "form-group";
+
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = i18n.t("simple.excluded_tracks_label");
+    group.appendChild(label);
+
+    const list = document.createElement("div");
+    list.className = "file-list";
+
+    for (const entry of excludedZipTracks) {
+      const item = document.createElement("div");
+      item.className = "file-item";
+
+      const nameEl = document.createElement("span");
+      nameEl.className = "mono muted";
+      nameEl.textContent = entry.zipPath || entry.filename;
+
+      const restoreBtn = document.createElement("button");
+      restoreBtn.type = "button";
+      restoreBtn.className = "btn btn-ghost btn-sm";
+      restoreBtn.textContent = i18n.t("simple.restore_track");
+      restoreBtn.addEventListener("click", () => {
+        setEntryIncluded(entry.id, true);
+      });
+
+      item.appendChild(nameEl);
+      item.appendChild(restoreBtn);
+      list.appendChild(item);
+    }
+
+    group.appendChild(list);
+    wrapper.appendChild(group);
+  }
+
   return wrapper;
 }
 
@@ -823,7 +1093,8 @@ function buildProfileAndTitleBlock() {
   profileSelect.addEventListener("change", (event) => {
     formState.profileId = event.target.value;
     formState.generateMix = null;
-    if (formState.uiMode === "multitrack") {
+    formState.diarizeEnabled = null;
+    if (formState.uiMode === "multitrack" || getActiveEntries().length === 1) {
       renderComposer();
     }
   });
@@ -989,11 +1260,31 @@ function renderComposer() {
   const body = document.createElement("div");
   body.className = "card-body";
   body.appendChild(buildDropzoneBlock());
-  body.appendChild(buildModeSelectorBlock());
+  const modeBlock = buildModeSelectorBlock();
+  if (modeBlock) {
+    body.appendChild(modeBlock);
+  }
 
   const multitrackBlock = buildMultitrackTableBlock();
   if (multitrackBlock) {
     body.appendChild(multitrackBlock);
+  }
+
+  const zipTracksBlock = buildZipTracksBlock();
+  if (zipTracksBlock) {
+    body.appendChild(zipTracksBlock);
+  }
+
+  const noActiveTracks =
+    formState.files.length > 0 &&
+    formState.inspectStatus === "done" &&
+    getActiveEntries().length === 0;
+  if (noActiveTracks) {
+    const emptyAlert = document.createElement("div");
+    emptyAlert.className = "form-error";
+    emptyAlert.setAttribute("role", "alert");
+    emptyAlert.textContent = i18n.t("simple.no_active_tracks");
+    body.appendChild(emptyAlert);
   }
 
   body.appendChild(buildProfileAndTitleBlock());
@@ -1017,7 +1308,8 @@ function renderComposer() {
   submitBtn.disabled =
     formState.isSubmitting ||
     formState.inspectStatus === "loading" ||
-    formState.files.length === 0;
+    formState.files.length === 0 ||
+    noActiveTracks;
   submitBtn.textContent = formState.isSubmitting
     ? i18n.t("simple.submitting")
     : i18n.t("simple.submit");
