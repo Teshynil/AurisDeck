@@ -58,7 +58,7 @@ function readUint64(view, offset) {
 /**
  * Inspect a local File (.zip) and return supported media entries sorted by path.
  * @param {File} file
- * @returns {Promise<{ entries: Array<{ filename: string, path: string }>, hasHints: boolean }>}
+ * @returns {Promise<{ entries: Array<{ filename: string, path: string }> }>}
  */
 export async function inspectLocalZipFile(file) {
   if (!supportsLocalZipInspection()) {
@@ -112,7 +112,6 @@ export async function inspectLocalZipFile(file) {
   const decoder = new TextDecoder("utf-8", { fatal: false });
 
   const entries = [];
-  let hasHints = false;
   let pos = 0;
 
   while (pos + 46 <= cdBuf.byteLength) {
@@ -137,15 +136,11 @@ export async function inspectLocalZipFile(file) {
     }
     const basename = normalized.split("/").pop() || "";
     const lowered = basename.toLowerCase();
-    if (lowered === "info.txt" || lowered.endsWith(".aup")) {
-      hasHints = true;
-      continue;
-    }
     if (MEDIA_EXTENSIONS.has(getExtension(lowered))) {
       entries.push({ filename: basename, path: normalized });
     }
   }
 
   entries.sort((a, b) => a.path.localeCompare(b.path));
-  return { entries, hasHints };
+  return { entries };
 }

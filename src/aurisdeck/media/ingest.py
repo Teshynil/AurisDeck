@@ -10,7 +10,6 @@ from collections.abc import Collection
 from pathlib import Path, PurePosixPath
 
 from aurisdeck.media.ffmpeg import MediaInvalidError
-from aurisdeck.media.parsers import TrackHint, parse_track_hints, resolve_track_hint
 from aurisdeck.storage.paths import is_ignored_archive_member, sanitize_filename
 
 SUPPORTED_MEDIA_EXTENSIONS: frozenset[str] = frozenset(
@@ -100,16 +99,14 @@ def unpack_multitrack_zip(
     dest_dir: Path | str,
     *,
     excluded_members: Collection[str] | None = None,
-) -> list[tuple[Path, TrackHint]]:
-    """Safely unpack supported audio/video tracks and parse `.aup` / `info.txt` hints."""
+) -> list[Path]:
+    """Safely unpack supported audio/video tracks from a ZIP archive."""
     archive_path = Path(zip_path)
     dest_path = Path(dest_dir)
     dest_path.mkdir(parents=True, exist_ok=True)
     dest_root = dest_path.resolve()
     excluded_paths, excluded_names = _normalize_excluded_members(excluded_members)
 
-    info_entries: list[tuple[str, zipfile.ZipInfo]] = []
-    aup_entries: list[tuple[str, zipfile.ZipInfo]] = []
     media_entries: list[tuple[str, zipfile.ZipInfo]] = []
 
     try:
@@ -130,54 +127,23 @@ def unpack_multitrack_zip(
 
                 basename = normalized.rsplit("/", 1)[-1]
                 lowered = basename.lower()
-                if lowered == "info.txt":
-                    info_entries.append((normalized, member))
-                elif Path(lowered).suffix == ".aup":
-                    aup_entries.append((normalized, member))
-                elif Path(lowered).suffix in SUPPORTED_MEDIA_EXTENSIONS:
+                if Path(lowered).suffix in SUPPORTED_MEDIA_EXTENSIONS:
                     if normalized.lower() in excluded_paths or lowered in excluded_names:
                         continue
                     media_entries.append((normalized, member))
 
-            info_entries.sort(key=lambda item: (item[0].count("/"), item[0]))
-            aup_entries.sort(key=lambda item: (item[0].count("/"), item[0]))
             media_entries.sort(key=lambda item: item[0])
 
-            info_text = "\n".join(
-                zf.read(member).decode("utf-8", errors="replace") for _, member in info_entries
-            )
-            aup_texts = [
-                zf.read(member).decode("utf-8", errors="replace") for _, member in aup_entries
-            ]
-
-            combined_hints: dict[str, TrackHint] = {}
-            if info_text and not aup_texts:
-                combined_hints.update(parse_track_hints(info_text=info_text))
-            elif aup_texts:
-                for idx, aup_text in enumerate(aup_texts):
-                    combined_hints.update(
-                        parse_track_hints(
-                            info_text=info_text if idx == 0 else None,
-                            aup_text=aup_text,
-                        )
-                    )
-
             used_names: set[str] = set()
-            extracted: list[tuple[Path, TrackHint]] = []
+            extracted: list[Path] = []
             for normalized, member in media_entries:
                 original_basename = normalized.rsplit("/", 1)[-1]
                 target_path = _deduplicated_dest_path(dest_root, original_basename, used_names)
                 with zf.open(member, "r") as src_stream, open(target_path, "wb") as dst_stream:
                     shutil.copyfileobj(src_stream, dst_stream)
-
-                hint = resolve_track_hint(
-                    target_path.name,
-                    combined_hints,
-                    original_filename=original_basename,
-                )
-                extracted.append((target_path, hint))
+                extracted.append(target_path)
     except (zipfile.BadZipFile, OSError) as exc:
         raise MediaInvalidError(detail=f"Invalid ZIP archive {archive_path.name}: {exc}") from exc
 
-    extracted.sort(key=lambda pair: str(pair[0]))
+    extracted.sort(key=str)
     return extracted

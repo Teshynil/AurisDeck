@@ -511,7 +511,7 @@ def _create_local_jobs(
             raise click.ClickException("INVALID_ARCHIVE: ZIP archive contains no supported tracks")
 
         title = Path(sanitize_filename(inputs[0].name)).stem or "Multitrack"
-        for idx, (extracted_path, hint) in enumerate(extracted):
+        for idx, extracted_path in enumerate(extracted):
             track_id = uuid.uuid4().hex
             speaker_key = f"SPEAKER_{idx:02d}"
             safe_name = extracted_path.name
@@ -523,9 +523,9 @@ def _create_local_jobs(
                     track_id,
                     safe_name,
                     final_path.relative_to(paths.root).as_posix(),
-                    hint.offset_ms,
+                    0,
                     speaker_key,
-                    hint.speaker_name or Path(safe_name).stem or speaker_key,
+                    Path(safe_name).stem or speaker_key,
                 )
             )
     else:

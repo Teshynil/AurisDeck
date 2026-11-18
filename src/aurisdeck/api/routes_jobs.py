@@ -624,7 +624,7 @@ async def inspect_zip(
     file: Annotated[UploadFile, File(...)],
     paths: Annotated[DataPaths, Depends(get_paths)],
 ) -> list[dict[str, Any]]:
-    """Inspect a multitrack ZIP archive in tmp/, returning track hints without creating a job."""
+    """Inspect a multitrack ZIP archive in tmp/, returning supported tracks without creating a job."""
     inspect_dir = paths.tmp / f"inspect_{uuid.uuid4().hex}"
     zip_name = sanitize_filename(file.filename or "archive.zip")
     zip_path = inspect_dir / zip_name
@@ -644,11 +644,11 @@ async def inspect_zip(
 
     return [
         {
-            "filename": hint.filename,
-            "speaker_name": hint.speaker_name,
-            "offset_ms": hint.offset_ms,
+            "filename": path.name,
+            "speaker_name": path.stem or path.name,
+            "offset_ms": 0,
         }
-        for _, hint in extracted
+        for path in extracted
     ]
 
 
@@ -730,8 +730,8 @@ async def _unpack_uploaded_zip(
     extract_dir: Path,
     *,
     excluded_members: Collection[str] | None = None,
-) -> tuple[str, list[tuple[Path, Any]]]:
-    """Save an uploaded ZIP temporarily, safely extract supported media files, and return hints."""
+) -> tuple[str, list[Path]]:
+    """Save an uploaded ZIP temporarily and safely extract supported media files."""
     tmp_upload_dir = paths.tmp / f"upload_{uuid.uuid4().hex}"
     zip_name = sanitize_filename(upload.filename or "archive.zip")
     zip_path = tmp_upload_dir / zip_name
@@ -855,7 +855,7 @@ async def create_job(
                         extract_dir,
                         excluded_members=excluded_tracks,
                     )
-                    for extracted_path, _hint in extracted:
+                    for extracted_path in extracted:
                         batch_items.append((extracted_path.name, extracted_path, None))
                 else:
                     batch_items.append((safe_name, None, upload))
@@ -949,7 +949,7 @@ async def create_job(
                             error_code="VALIDATION_ERROR",
                             detail="ZIP archive contains multiple tracks; use multitrack or batch mode",
                         )
-                    extracted_path, _hint = extracted[0]
+                    extracted_path = extracted[0]
                     safe_name = extracted_path.name
                     media_dir.mkdir(parents=True, exist_ok=True)
                     dest_path = media_dir / f"{track_id}_{safe_name}"
@@ -1021,7 +1021,7 @@ async def create_job(
                         extract_dir,
                         excluded_members=excluded_tracks,
                     )
-                    for extracted_path, hint in extracted:
+                    for extracted_path in extracted:
                         track_id = uuid.uuid4().hex
                         speaker_key = f"SPEAKER_{track_idx:02d}"
                         safe_name = extracted_path.name
@@ -1034,17 +1034,16 @@ async def create_job(
                             Path(safe_name).stem,
                             str(track_idx),
                             speaker_key,
-                            hint.speaker_name,
                         )
                         try:
                             resolved_name = _resolve_track_speaker_name(
                                 speaker_aliases,
-                                default_name=hint.speaker_name or Path(safe_name).stem or speaker_key,
+                                default_name=Path(safe_name).stem or speaker_key,
                                 keys=lookup_keys,
                             )
                             resolved_offset = _resolve_track_offset_ms(
                                 track_offsets,
-                                default_offset_ms=hint.offset_ms,
+                                default_offset_ms=0,
                                 keys=lookup_keys,
                             )
                         except (ValueError, TypeError) as exc:
