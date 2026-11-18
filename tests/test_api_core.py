@@ -351,17 +351,26 @@ def test_bearer_token_and_admin_endpoints_and_persistence(tmp_path: Path) -> Non
 
         admin_get = client.get("/api/v1/admin/settings", headers=headers)
         assert admin_get.status_code == 200
-        assert admin_get.json() == {"model_idle_unload_seconds": 120, "cpu_threads": 0}
+        assert admin_get.json() == {
+            "model_idle_unload_seconds": 120,
+            "cpu_threads": 0,
+            "log_level": "INFO",
+        }
 
         admin_patch = client.patch(
             "/api/v1/admin/settings",
-            json={"model_idle_unload_seconds": 300, "cpu_threads": 6},
+            json={"model_idle_unload_seconds": 300, "cpu_threads": 6, "log_level": "DEBUG"},
             headers=headers,
         )
         assert admin_patch.status_code == 200
-        assert admin_patch.json() == {"model_idle_unload_seconds": 300, "cpu_threads": 6}
+        assert admin_patch.json() == {
+            "model_idle_unload_seconds": 300,
+            "cpu_threads": 6,
+            "log_level": "DEBUG",
+        }
         assert settings.model_idle_unload_seconds == 300
         assert settings.cpu_threads == 6
+        assert settings.log_level == "DEBUG"
 
         devices_resp = client.get("/api/v1/system/devices", headers=headers)
         assert devices_resp.status_code == 200
@@ -380,7 +389,11 @@ def test_bearer_token_and_admin_endpoints_and_persistence(tmp_path: Path) -> Non
     with TestClient(restarted_app) as restarted_client:
         reloaded = restarted_client.get("/api/v1/admin/settings")
         assert reloaded.status_code == 200
-        assert reloaded.json() == {"model_idle_unload_seconds": 300, "cpu_threads": 6}
+        assert reloaded.json() == {
+            "model_idle_unload_seconds": 300,
+            "cpu_threads": 6,
+            "log_level": "DEBUG",
+        }
 
     # require_admin rejects non-admin users with 403 FORBIDDEN
     with pytest.raises(ApiError) as exc_info:

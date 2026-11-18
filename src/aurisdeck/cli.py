@@ -927,13 +927,40 @@ def main() -> None:
     show_default=True,
     help="Persistent AurisDeck data directory.",
 )
-def serve(host: str, port: int, data_dir: Path) -> None:
+@click.option(
+    "--log-level",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False),
+    default=None,
+    envvar="AURISDECK_LOG_LEVEL",
+    help="Minimum logging level (overrides AURISDECK_LOG_LEVEL).",
+)
+def serve(host: str, port: int, data_dir: Path, log_level: str | None) -> None:
     """Start the AurisDeck web server and job coordinator."""
     import uvicorn
 
-    settings = Settings(data_dir=data_dir)
+    from aurisdeck.logging_setup import configure_main_logging
+    from aurisdeck.storage.paths import DataPaths
+
+    settings_kwargs: dict[str, Any] = {"data_dir": data_dir}
+    if log_level is not None:
+        settings_kwargs["log_level"] = log_level.upper()
+    settings = Settings(**settings_kwargs)
+    paths = DataPaths(settings.data_dir)
+    paths.ensure_dirs()
+    configure_main_logging(
+        paths,
+        level=settings.log_level,
+        max_bytes=settings.log_max_bytes,
+        backup_count=settings.log_backup_count,
+    )
     app = create_app(settings)
-    uvicorn.run(app, host=host, port=port, root_path=settings.base_path)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        root_path=settings.base_path,
+        log_level=settings.log_level.lower(),
+    )
 
 
 @main.command()

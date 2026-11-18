@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request
@@ -20,6 +21,7 @@ from aurisdeck.workers.coordinator import Coordinator
 from aurisdeck.workers.events import EventBus
 
 SESSION_COOKIE_NAME = "aurisdeck_session"
+logger = logging.getLogger(__name__)
 
 
 class ApiError(Exception):
@@ -137,14 +139,33 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register standard JSON error handlers for Auth, Backend, HTTP, and validation errors."""
 
     @app.exception_handler(ApiError)
-    async def _handle_api_error(_request: Request, exc: ApiError) -> JSONResponse:
+    async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+        if exc.status_code >= 500:
+            logger.error(
+                "API %s %s -> %s (%s): %s",
+                request.method,
+                request.url.path,
+                exc.status_code,
+                exc.error_code,
+                exc.detail,
+            )
+        else:
+            logger.warning(
+                "API %s %s -> %s (%s): %s",
+                request.method,
+                request.url.path,
+                exc.status_code,
+                exc.error_code,
+                exc.detail,
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content=error_payload(exc.error_code, exc.error_params, exc.detail),
         )
 
     @app.exception_handler(AuthError)
-    async def _handle_auth_error(_request: Request, exc: AuthError) -> JSONResponse:
+    async def _handle_auth_error(request: Request, exc: AuthError) -> JSONResponse:
+        logger.warning("Auth error on %s %s (%s)", request.method, request.url.path, exc.error_code)
         return JSONResponse(
             status_code=401,
             content=error_payload(exc.error_code, exc.error_params, str(exc)),
@@ -152,8 +173,15 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AurisDeckBackendError)
     async def _handle_backend_error(
-        _request: Request, exc: AurisDeckBackendError
+        request: Request, exc: AurisDeckBackendError
     ) -> JSONResponse:
+        logger.exception(
+            "Backend error on %s %s (%s): %s",
+            request.method,
+            request.url.path,
+            exc.error_code,
+            exc.detail or str(exc),
+        )
         return JSONResponse(
             status_code=500,
             content=error_payload(exc.error_code, exc.error_params, exc.detail or str(exc)),

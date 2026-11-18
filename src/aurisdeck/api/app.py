@@ -36,6 +36,7 @@ from aurisdeck.db.migrations import run_migrations
 from aurisdeck.db.repositories import JobRepo, SegmentRepo, UserRepo
 from aurisdeck.domain.models import SlugStr
 from aurisdeck.i18n.loader import LocaleLoader
+from aurisdeck.logging_setup import configure_main_logging, set_log_level
 from aurisdeck.storage.defaults import seed_default_profiles
 from aurisdeck.storage.paths import DataPaths, atomic_write_text
 from aurisdeck.storage.stores import ProfileStore
@@ -84,20 +85,22 @@ class AdminSettingsPatch(BaseModel):
 
     model_idle_unload_seconds: int | None = Field(default=None, ge=0)
     cpu_threads: int | None = Field(default=None, ge=0)
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] | None = None
 
 
 def _system_settings_path(paths: DataPaths) -> Path:
     return paths.root / _SYSTEM_SETTINGS_FILENAME
 
 
-def _current_admin_settings(settings: Settings) -> dict[str, int]:
+def _current_admin_settings(settings: Settings) -> dict[str, Any]:
     return {
         "model_idle_unload_seconds": int(settings.model_idle_unload_seconds),
         "cpu_threads": int(settings.cpu_threads),
+        "log_level": str(settings.log_level),
     }
 
 
-def _load_persisted_system_settings(paths: DataPaths, settings: Settings) -> dict[str, int]:
+def _load_persisted_system_settings(paths: DataPaths, settings: Settings) -> dict[str, Any]:
     path = _system_settings_path(paths)
     if path.is_file():
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -107,10 +110,12 @@ def _load_persisted_system_settings(paths: DataPaths, settings: Settings) -> dic
                 settings.model_idle_unload_seconds = parsed.model_idle_unload_seconds
             if parsed.cpu_threads is not None:
                 settings.cpu_threads = parsed.cpu_threads
+            if parsed.log_level is not None:
+                settings.log_level = parsed.log_level
     return _current_admin_settings(settings)
 
 
-def _save_persisted_system_settings(paths: DataPaths, settings: Settings) -> dict[str, int]:
+def _save_persisted_system_settings(paths: DataPaths, settings: Settings) -> dict[str, Any]:
     payload = _current_admin_settings(settings)
     atomic_write_text(
         _system_settings_path(paths),
@@ -271,7 +276,7 @@ def _build_core_router() -> APIRouter:
     async def get_admin_settings(
         request: Request,
         _admin: Annotated[dict[str, Any], Depends(require_admin)],
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         settings = get_settings(request)
         payload = _current_admin_settings(settings)
         request.app.state.admin_settings = payload
@@ -282,13 +287,16 @@ def _build_core_router() -> APIRouter:
         body: AdminSettingsPatch,
         request: Request,
         _admin: Annotated[dict[str, Any], Depends(require_admin)],
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         settings = get_settings(request)
         paths = get_paths(request)
         if body.model_idle_unload_seconds is not None:
             settings.model_idle_unload_seconds = body.model_idle_unload_seconds
         if body.cpu_threads is not None:
             settings.cpu_threads = body.cpu_threads
+        if body.log_level is not None:
+            settings.log_level = body.log_level
+            set_log_level(settings.log_level)
         payload = _save_persisted_system_settings(paths, settings)
         request.app.state.admin_settings = payload
         return payload
@@ -340,6 +348,12 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         paths.ensure_dirs()
         app.state.admin_settings = _load_persisted_system_settings(paths, resolved_settings)
+        configure_main_logging(
+            paths,
+            level=resolved_settings.log_level,
+            max_bytes=resolved_settings.log_max_bytes,
+            backup_count=resolved_settings.log_backup_count,
+        )
         run_migrations(paths.db_path)
         seed_default_profiles(ProfileStore(paths))
         app.state.coordinator.start()

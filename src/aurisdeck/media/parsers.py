@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _TRACK_LINE_RE = re.compile(r"^track\s+(\d+)\s*[:\-]\s*(.+)$", re.IGNORECASE)
 _FILE_SPEAKER_RE = re.compile(r"^([^:\r\n]+?\.[A-Za-z0-9]{2,5})\s*:\s*(.+)$")
@@ -125,11 +128,13 @@ class AudacityAupParser:
             return {}
 
         if _UNSAFE_XML_RE.search(aup_text):
+            logger.warning("Rejected .aup archive containing unsafe XML declarations (DOCTYPE/ENTITY)")
             raise ValueError("Unsafe XML declarations (DOCTYPE/ENTITY) are not allowed in .aup")
 
         try:
             root = ET.fromstring(aup_text)
-        except ET.ParseError:
+        except ET.ParseError as exc:
+            logger.warning("Failed parsing .aup XML; ignoring hints: %s", exc)
             return {}
 
         hints: dict[str, TrackHint] = {}
