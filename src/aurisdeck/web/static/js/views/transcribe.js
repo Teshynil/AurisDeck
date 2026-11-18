@@ -1476,7 +1476,6 @@ function createDeviceCardRefs(deviceId) {
     }
   });
   actions.appendChild(cancelBtn);
-  busyBox.appendChild(actions);
 
   const idleBox = document.createElement("div");
   const idleText = document.createElement("div");
@@ -1485,8 +1484,15 @@ function createDeviceCardRefs(deviceId) {
   refs.idleBox = idleBox;
   refs.idleText = idleText;
 
+  body.style.display = "flex";
+  body.style.flexDirection = "column";
+  body.style.flex = "1";
+  actions.style.marginTop = "auto";
+  actions.style.paddingTop = "0.55rem";
+
   body.appendChild(busyBox);
   body.appendChild(idleBox);
+  body.appendChild(actions);
   card.appendChild(body);
   return refs;
 }
@@ -1517,6 +1523,12 @@ function patchDeviceCardRefs(refs, device, jobsById) {
   if (!isBusy) {
     refs.currentJobId = null;
     refs.fill.style.width = "0%";
+    refs.actions.hidden = false;
+    refs.cancelBtn.disabled = true;
+    const cancelLabel = i18n.t("common.cancel");
+    if (refs.cancelBtn.textContent !== cancelLabel) {
+      refs.cancelBtn.textContent = cancelLabel;
+    }
     const nextIdle =
       device.vram_total_mb && device.vram_free_mb !== null && device.vram_free_mb !== undefined
         ? i18n.t("settings.system.vram_usage", {
@@ -1597,8 +1609,9 @@ function patchDeviceCardRefs(refs, device, jobsById) {
     refs.statsEl.textContent = statsStr;
   }
 
-  refs.actions.hidden = stageCode === "cancelling";
-  refs.cancelBtn.disabled = formState.cancellingIds.has(device.active_job_id);
+  refs.actions.hidden = false;
+  refs.cancelBtn.disabled =
+    stageCode === "cancelling" || formState.cancellingIds.has(device.active_job_id);
   const cancelLabel = i18n.t("common.cancel");
   if (refs.cancelBtn.textContent !== cancelLabel) {
     refs.cancelBtn.textContent = cancelLabel;
