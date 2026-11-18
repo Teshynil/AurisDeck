@@ -74,6 +74,10 @@ class DataPaths:
     def models(self) -> Path:
         return self.root / "models"
 
+    @property
+    def logs(self) -> Path:
+        return self.root / "logs"
+
     def ensure_dirs(self) -> None:
         """Idempotently create all top-level directories inside /data."""
         for directory in (
@@ -87,6 +91,7 @@ class DataPaths:
             self.outputs,
             self.tmp,
             self.models,
+            self.logs,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
@@ -98,6 +103,13 @@ class DataPaths:
 
     def job_outputs_dir(self, job_id: str) -> Path:
         return self.outputs / _validate_job_id(job_id)
+
+    def job_logs_dir(self, job_id: str) -> Path:
+        return self.job_outputs_dir(job_id) / "logs"
+
+    def worker_log_path(self, device_id: str) -> Path:
+        safe_device = sanitize_filename((device_id or "worker").replace(":", "_"))
+        return self.logs / f"worker-{safe_device}.log"
 
     def job_tmp_dir(self, job_id: str) -> Path:
         return self.tmp / _validate_job_id(job_id)
