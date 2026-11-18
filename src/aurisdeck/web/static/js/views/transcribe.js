@@ -60,6 +60,13 @@ let composerHost = null;
 let monitorHost = null;
 let unsubscribeStore = null;
 
+const QUEUE_TTL_MS = 120_000;
+const dismissedGroupKeys = new Set();
+const collapsedGroupKeys = new Set();
+
+let monitorRefs = null;
+let ttlTimerId = null;
+
 function stripExtension(filename) {
   const raw = String(filename || "");
   const dot = raw.lastIndexOf(".");
@@ -1326,32 +1333,66 @@ function renderComposer() {
   composerHost.appendChild(card);
 }
 
-function buildDeviceCard(device, jobsById) {
+function formatCountdownMMSS(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const m = String(Math.floor(totalSec / 60)).padStart(2, "0");
+  const s = String(totalSec % 60).padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function patchStageBadge(badgeEl, stageCode) {
+  const code = stageCode || "queued";
+  const nextClass = `badge ${STAGE_BADGE_CLASS[code] || "badge-info"}`;
+  const nextText = i18n.t(`stages.${code}`);
+  if (badgeEl.className !== nextClass) {
+    badgeEl.className = nextClass;
+  }
+  if (badgeEl.textContent !== nextText) {
+    badgeEl.textContent = nextText;
+  }
+}
+
+function resolveDeviceTrackInfo(device, activeJob) {
+  const tracks = Array.isArray(activeJob?.tracks) ? activeJob.tracks : [];
+  if (!tracks.length) {
+    return null;
+  }
+  let idx = -1;
+  if (device.track_id) {
+    idx = tracks.findIndex((t) => t.id === device.track_id);
+  }
+  if (idx === -1 && tracks.length === 1) {
+    idx = 0;
+  }
+  if (idx === -1) {
+    return null;
+  }
+  const track = tracks[idx];
+  const label = track.display_name || track.original_filename || track.id;
+  return {
+    indexLabel: `${idx + 1}/${tracks.length}`,
+    name: label,
+  };
+}
+
+function createDeviceCardRefs(deviceId) {
   const card = document.createElement("div");
   card.className = "card";
+  card.dataset.deviceId = deviceId;
 
   const header = document.createElement("div");
   header.className = "card-header";
 
   const left = document.createElement("div");
+  left.style.minWidth = "0";
   const title = document.createElement("h3");
-  title.className = "card-title mono";
-  title.textContent = device.id || (device.kind === "cuda" ? "cuda" : "cpu");
-
+  title.className = "card-title mono text-truncate";
   const subtitle = document.createElement("p");
-  subtitle.className = "card-subtitle";
-  subtitle.textContent =
-    device.name || (device.kind === "cuda" ? i18n.t("common.cuda") : i18n.t("common.cpu"));
-
+  subtitle.className = "card-subtitle text-truncate";
   left.appendChild(title);
   left.appendChild(subtitle);
 
   const kindBadge = document.createElement("span");
-  kindBadge.className =
-    device.kind === "cuda" ? "badge badge-gpu" : "badge badge-cpu";
-  kindBadge.textContent =
-    device.kind === "cuda" ? i18n.t("common.cuda") : i18n.t("common.cpu");
-
   header.appendChild(left);
   header.appendChild(kindBadge);
   card.appendChild(header);
@@ -1359,99 +1400,507 @@ function buildDeviceCard(device, jobsById) {
   const body = document.createElement("div");
   body.className = "card-body";
 
-  const activeJob = device.active_job_id ? jobsById.get(device.active_job_id) : null;
-  if (device.active_job_id) {
-    const jobTitle = document.createElement("div");
-    jobTitle.className = "row-between";
+  const busyBox = document.createElement("div");
+  busyBox.className = "stack";
+  busyBox.style.gap = "0.55rem";
 
-    const nameSpan = document.createElement("strong");
-    nameSpan.textContent = activeJob?.title || device.active_job_id;
-    jobTitle.appendChild(nameSpan);
+  const jobBlock = document.createElement("div");
+  jobBlock.className = "device-job-block";
 
-    const stageCode = device.stage || activeJob?.stage || activeJob?.status || "transcribing";
-    jobTitle.appendChild(createStageBadge(stageCode));
-    body.appendChild(jobTitle);
+  const jobTitleRow = document.createElement("div");
+  jobTitleRow.className = "device-job-title-row";
+  const nameSpan = document.createElement("strong");
+  nameSpan.className = "device-job-name text-truncate";
+  const stageBadge = document.createElement("span");
+  jobTitleRow.appendChild(nameSpan);
+  jobTitleRow.appendChild(stageBadge);
 
-    const progressData = activeJob?.progress || {};
-    const processed =
-      device.processed_ms ?? progressData.processed_ms ?? 0;
-    const total = device.total_ms ?? progressData.total_ms ?? 0;
-    const percent =
-      typeof device.percent === "number" && device.percent > 0
-        ? device.percent
-        : typeof progressData.percent === "number"
-          ? progressData.percent
+  const trackRow = document.createElement("div");
+  trackRow.className = "device-track-row";
+  const trackPill = document.createElement("span");
+  trackPill.className = "track-pill";
+  const trackNameEl = document.createElement("span");
+  trackNameEl.className = "device-track-name text-truncate";
+  trackRow.appendChild(trackPill);
+  trackRow.appendChild(trackNameEl);
+
+  jobBlock.appendChild(jobTitleRow);
+  jobBlock.appendChild(trackRow);
+  busyBox.appendChild(jobBlock);
+
+  const bar = document.createElement("div");
+  bar.className = "progress-bar";
+  const fill = document.createElement("div");
+  fill.className = "progress-fill is-active";
+  bar.appendChild(fill);
+  busyBox.appendChild(bar);
+
+  const meta = document.createElement("div");
+  meta.className = "progress-meta";
+  const pctEl = document.createElement("span");
+  const statsEl = document.createElement("span");
+  meta.appendChild(pctEl);
+  meta.appendChild(statsEl);
+  busyBox.appendChild(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "row";
+  actions.style.justifyContent = "flex-end";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "btn btn-danger btn-sm";
+  cancelBtn.textContent = i18n.t("common.cancel");
+  const refs = {
+    card,
+    title,
+    subtitle,
+    kindBadge,
+    busyBox,
+    idleBox: null,
+    idleText: null,
+    nameSpan,
+    stageBadge,
+    trackRow,
+    trackPill,
+    trackNameEl,
+    fill,
+    pctEl,
+    statsEl,
+    actions,
+    cancelBtn,
+    currentJobId: null,
+  };
+  cancelBtn.addEventListener("click", () => {
+    if (refs.currentJobId) {
+      void handleCancelJob(refs.currentJobId);
+    }
+  });
+  actions.appendChild(cancelBtn);
+  busyBox.appendChild(actions);
+
+  const idleBox = document.createElement("div");
+  const idleText = document.createElement("div");
+  idleText.className = "help-text";
+  idleBox.appendChild(idleText);
+  refs.idleBox = idleBox;
+  refs.idleText = idleText;
+
+  body.appendChild(busyBox);
+  body.appendChild(idleBox);
+  card.appendChild(body);
+  return refs;
+}
+
+function patchDeviceCardRefs(refs, device, jobsById) {
+  const devTitle = device.id || (device.kind === "cuda" ? "cuda" : "cpu");
+  if (refs.title.textContent !== devTitle) {
+    refs.title.textContent = devTitle;
+  }
+  const devSub =
+    device.name || (device.kind === "cuda" ? i18n.t("common.cuda") : i18n.t("common.cpu"));
+  if (refs.subtitle.textContent !== devSub) {
+    refs.subtitle.textContent = devSub;
+  }
+  const kindClass = device.kind === "cuda" ? "badge badge-gpu" : "badge badge-cpu";
+  const kindText = device.kind === "cuda" ? i18n.t("common.cuda") : i18n.t("common.cpu");
+  if (refs.kindBadge.className !== kindClass) {
+    refs.kindBadge.className = kindClass;
+  }
+  if (refs.kindBadge.textContent !== kindText) {
+    refs.kindBadge.textContent = kindText;
+  }
+
+  const isBusy = Boolean(device.active_job_id);
+  refs.busyBox.hidden = !isBusy;
+  refs.idleBox.hidden = isBusy;
+
+  if (!isBusy) {
+    refs.currentJobId = null;
+    refs.fill.style.width = "0%";
+    const nextIdle =
+      device.vram_total_mb && device.vram_free_mb !== null && device.vram_free_mb !== undefined
+        ? i18n.t("settings.system.vram_usage", {
+            free: device.vram_free_mb,
+            total: device.vram_total_mb,
+          })
+        : i18n.t("simple.queue_empty");
+    if (refs.idleText.textContent !== nextIdle) {
+      refs.idleText.textContent = nextIdle;
+    }
+    return;
+  }
+
+  const activeJob = jobsById.get(device.active_job_id) || null;
+  refs.currentJobId = device.active_job_id;
+  const jobTitle = activeJob?.title || device.active_job_id;
+  if (refs.nameSpan.textContent !== jobTitle) {
+    refs.nameSpan.textContent = jobTitle;
+    refs.nameSpan.title = jobTitle;
+  }
+
+  const stageCode = device.stage || activeJob?.stage || activeJob?.status || "transcribing";
+  patchStageBadge(refs.stageBadge, stageCode);
+
+  const trackInfo = resolveDeviceTrackInfo(device, activeJob);
+  if (trackInfo) {
+    refs.trackRow.hidden = false;
+    const pillText = `Track ${trackInfo.indexLabel}`;
+    if (refs.trackPill.textContent !== pillText) {
+      refs.trackPill.textContent = pillText;
+    }
+    if (refs.trackNameEl.textContent !== trackInfo.name) {
+      refs.trackNameEl.textContent = trackInfo.name;
+      refs.trackNameEl.title = trackInfo.name;
+    }
+  } else {
+    refs.trackRow.hidden = true;
+  }
+
+  const trackProgress =
+    device.track_id && activeJob?.track_progress
+      ? activeJob.track_progress[device.track_id]
+      : null;
+  const fallbackProgress = activeJob?.progress || {};
+  const processed = device.processed_ms ?? trackProgress?.processed_ms ?? fallbackProgress.processed_ms ?? 0;
+  const total = device.total_ms ?? trackProgress?.total_ms ?? fallbackProgress.total_ms ?? 0;
+  const percent =
+    typeof device.percent === "number" && device.percent > 0
+      ? device.percent
+      : typeof trackProgress?.percent === "number"
+        ? trackProgress.percent
+        : typeof fallbackProgress.percent === "number"
+          ? fallbackProgress.percent
           : total > 0
             ? Math.min(100, Math.round((processed / total) * 100))
             : 0;
-    const rtfx = device.rtfx ?? progressData.rtfx ?? null;
-    const eta = computeEta(processed, total, rtfx);
+  const clampedPct = Math.max(0, Math.min(100, percent));
 
-    const bar = document.createElement("div");
-    bar.className = "progress-bar";
-    const fill = document.createElement("div");
-    fill.className = "progress-fill";
-    fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
-    bar.appendChild(fill);
-    body.appendChild(bar);
+  refs.fill.style.width = `${clampedPct}%`;
+  refs.fill.className = "progress-fill is-active";
 
-    const meta = document.createElement("div");
-    meta.className = "progress-meta";
-
-    const pctEl = document.createElement("span");
-    pctEl.textContent = `${percent}%`;
-    meta.appendChild(pctEl);
-
-    const statsParts = [];
-    if (rtfx !== null && rtfx !== undefined && Number(rtfx) > 0) {
-      statsParts.push(`RTFx ${Number(rtfx).toFixed(1)}x`);
-    }
-    if (eta) {
-      statsParts.push(`ETA ${eta}`);
-    }
-    const statsEl = document.createElement("span");
-    statsEl.textContent = statsParts.join(" · ");
-    meta.appendChild(statsEl);
-    body.appendChild(meta);
-
-    if (stageCode !== "cancelling") {
-      const actions = document.createElement("div");
-      actions.className = "row";
-      actions.style.justifyContent = "flex-end";
-
-      const cancelBtn = document.createElement("button");
-      cancelBtn.type = "button";
-      cancelBtn.className = "btn btn-danger btn-sm";
-      cancelBtn.disabled = formState.cancellingIds.has(device.active_job_id);
-      cancelBtn.textContent = i18n.t("common.cancel");
-      cancelBtn.addEventListener("click", () => {
-        void handleCancelJob(device.active_job_id);
-      });
-      actions.appendChild(cancelBtn);
-      body.appendChild(actions);
-    }
-  } else {
-    const idleText = document.createElement("div");
-    idleText.className = "help-text";
-    if (device.vram_total_mb && device.vram_free_mb !== null && device.vram_free_mb !== undefined) {
-      idleText.textContent = i18n.t("settings.system.vram_usage", {
-        free: device.vram_free_mb,
-        total: device.vram_total_mb,
-      });
-    } else {
-      idleText.textContent = i18n.t("simple.queue_empty");
-    }
-    body.appendChild(idleText);
+  const pctStr = `${clampedPct}%`;
+  if (refs.pctEl.textContent !== pctStr) {
+    refs.pctEl.textContent = pctStr;
   }
 
-  card.appendChild(body);
-  return card;
+  const rtfx = device.rtfx ?? trackProgress?.rtfx ?? fallbackProgress.rtfx ?? null;
+  const eta = computeEta(processed, total, rtfx);
+  const statsParts = [];
+  if (rtfx !== null && rtfx !== undefined && Number(rtfx) > 0) {
+    statsParts.push(`RTFx ${Number(rtfx).toFixed(1)}x`);
+  }
+  if (eta) {
+    statsParts.push(`ETA ${eta}`);
+  }
+  const statsStr = statsParts.join(" · ");
+  if (refs.statsEl.textContent !== statsStr) {
+    refs.statsEl.textContent = statsStr;
+  }
+
+  refs.actions.hidden = stageCode === "cancelling";
+  refs.cancelBtn.disabled = formState.cancellingIds.has(device.active_job_id);
+  const cancelLabel = i18n.t("common.cancel");
+  if (refs.cancelBtn.textContent !== cancelLabel) {
+    refs.cancelBtn.textContent = cancelLabel;
+  }
 }
 
-function buildJobQueueRow(job) {
-  const item = document.createElement("div");
-  item.className = "card";
-  item.style.padding = "0.9rem 1rem";
+function getJobFinishedMs(job) {
+  if (typeof job.finished_at_ms === "number" && job.finished_at_ms > 0) {
+    return job.finished_at_ms;
+  }
+  const ts = job.completed_at || job.updated_at;
+  if (!ts) {
+    return 0;
+  }
+  const parsed = Date.parse(ts);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildQueueGroups(jobs, nowMs) {
+  const groups = [];
+  const batchBuckets = new Map();
+
+  for (const job of jobs) {
+    if (job.mode === "batch" && job.batch_id) {
+      const key = `batch:${job.batch_id}`;
+      let list = batchBuckets.get(key);
+      if (!list) {
+        list = [];
+        batchBuckets.set(key, list);
+        groups.push({ key, kind: "batch", jobs: list });
+      }
+      list.push(job);
+    } else {
+      groups.push({ key: `job:${job.id}`, kind: job.mode || "single", jobs: [job] });
+    }
+  }
+
+  const visible = [];
+  for (const g of groups) {
+    if (dismissedGroupKeys.has(g.key)) {
+      continue;
+    }
+
+    const hasActive = g.jobs.some((j) => ACTIVE_STATUSES.has(j.status));
+    const allTerminal = g.jobs.every((j) => TERMINAL_STATUSES.has(j.status));
+
+    let finishedAtMs = 0;
+    if (allTerminal) {
+      finishedAtMs = g.jobs.reduce((max, j) => Math.max(max, getJobFinishedMs(j)), 0);
+      if (!finishedAtMs || nowMs - finishedAtMs >= QUEUE_TTL_MS) {
+        continue;
+      }
+    }
+
+    const childTracks = [];
+    if (g.kind === "batch" && g.jobs.length > 1) {
+      g.jobs.forEach((job, idx) => {
+        const isTerminal = TERMINAL_STATUSES.has(job.status);
+        const isQueued = job.status === "queued";
+        const progress = job.progress || {};
+        const processed = Number(progress.processed_ms || 0);
+        const total = Number(progress.total_ms || 0);
+        let pct = 0;
+        if (job.status === "completed" || job.status === "completed_partial") {
+          pct = 100;
+        } else if (!isQueued && !isTerminal) {
+          pct =
+            typeof progress.percent === "number"
+              ? progress.percent
+              : total > 0
+                ? Math.min(100, Math.round((processed / total) * 100))
+                : 0;
+        }
+        const statusCode = isQueued ? "queued" : job.stage || job.status || "queued";
+        childTracks.push({
+          key: `j:${job.id}`,
+          indexLabel: `${idx + 1}/${g.jobs.length}`,
+          name: job.title || job.id,
+          deviceId: isQueued ? null : progress.device_id || job.device_id || null,
+          statusCode,
+          percent: Math.max(0, Math.min(100, pct)),
+          rtfx: progress.rtfx ?? null,
+          eta: !isQueued && !isTerminal ? computeEta(processed, total, progress.rtfx ?? null) : null,
+          isTerminal,
+          isSuccess: job.status === "completed" || job.status === "completed_partial",
+          isFailed: job.status === "failed" || job.status === "cancelled",
+        });
+      });
+    } else {
+      const job = g.jobs[0];
+      const tracks = Array.isArray(job.tracks) ? job.tracks : [];
+      const trackProgressMap = job.track_progress || {};
+      if (tracks.length > 1) {
+        tracks.forEach((track, idx) => {
+          const tp = trackProgressMap[track.id] || null;
+          const trackDone =
+            track.status === "completed" ||
+            tp?.stage === "completed" ||
+            job.status === "completed" ||
+            job.status === "completed_partial";
+          const isRunning =
+            !trackDone &&
+            tp &&
+            (tp.stage === "transcribing" || tp.device_id || Number(tp.percent || 0) > 0);
+          const pct = trackDone ? 100 : isRunning ? Number(tp.percent || 0) : 0;
+          const statusCode = trackDone ? "completed" : isRunning ? tp.stage || "transcribing" : "queued";
+          childTracks.push({
+            key: `t:${track.id}`,
+            indexLabel: `${idx + 1}/${tracks.length}`,
+            name: track.display_name || track.original_filename || track.id,
+            deviceId: isRunning || trackDone ? tp?.device_id || null : null,
+            statusCode,
+            percent: Math.max(0, Math.min(100, pct)),
+            rtfx: isRunning ? tp?.rtfx ?? null : null,
+            eta: isRunning ? computeEta(tp?.processed_ms || 0, tp?.total_ms || 0, tp?.rtfx ?? null) : null,
+            isTerminal: trackDone,
+            isSuccess: trackDone,
+            isFailed: false,
+          });
+        });
+      } else {
+        const isTerminal = TERMINAL_STATUSES.has(job.status);
+        const isQueued = job.status === "queued";
+        const progress = job.progress || {};
+        const processed = Number(progress.processed_ms || 0);
+        const total = Number(progress.total_ms || 0);
+        const pct =
+          job.status === "completed" || job.status === "completed_partial"
+            ? 100
+            : isQueued || isTerminal
+              ? 0
+              : typeof progress.percent === "number"
+                ? progress.percent
+                : total > 0
+                  ? Math.min(100, Math.round((processed / total) * 100))
+                  : 0;
+        childTracks.push({
+          key: `j:${job.id}`,
+          indexLabel: "1/1",
+          name: job.title || job.id,
+          deviceId: isQueued ? null : progress.device_id || job.device_id || null,
+          statusCode: isQueued ? "queued" : job.stage || job.status || "queued",
+          percent: Math.max(0, Math.min(100, pct)),
+          rtfx: progress.rtfx ?? null,
+          eta: !isQueued && !isTerminal ? computeEta(processed, total, progress.rtfx ?? null) : null,
+          isTerminal,
+          isSuccess: job.status === "completed" || job.status === "completed_partial",
+          isFailed: job.status === "failed" || job.status === "cancelled",
+        });
+      }
+    }
+
+    const globalPct = childTracks.length
+      ? Math.round(childTracks.reduce((acc, t) => acc + t.percent, 0) / childTracks.length)
+      : 0;
+
+    const primaryJob = g.jobs[0];
+    const groupStatus = hasActive
+      ? g.jobs.find((j) => ACTIVE_STATUSES.has(j.status) && j.status !== "queued")?.stage ||
+        g.jobs.find((j) => ACTIVE_STATUSES.has(j.status))?.status ||
+        "queued"
+      : primaryJob.status;
+
+    const groupTitle =
+      g.kind === "batch" && g.jobs.length > 1
+        ? `${primaryJob.title || "Batch"} (${g.jobs.length} files)`
+        : primaryJob.title || primaryJob.id;
+
+    visible.push({
+      key: g.key,
+      kind: g.kind,
+      jobs: g.jobs,
+      primaryJob,
+      title: groupTitle,
+      mode: primaryJob.mode || "single",
+      statusCode: groupStatus,
+      hasActive,
+      allTerminal,
+      finishedAtMs,
+      globalPct,
+      childTracks,
+    });
+  }
+
+  return visible.slice(0, 10);
+}
+
+function createTrackRowRefs(trackKey) {
+  const row = document.createElement("div");
+  row.className = "queue-track-row";
+  row.dataset.trackKey = trackKey;
+
+  const nameCol = document.createElement("div");
+  nameCol.className = "queue-track-name-col";
+  const indexEl = document.createElement("span");
+  indexEl.className = "track-pill";
+  const filenameEl = document.createElement("span");
+  filenameEl.className = "mono text-truncate";
+  filenameEl.style.fontSize = "0.78rem";
+  nameCol.appendChild(indexEl);
+  nameCol.appendChild(filenameEl);
+
+  const deviceCol = document.createElement("div");
+  const deviceBadge = document.createElement("span");
+  deviceBadge.className = "badge mono";
+  deviceCol.appendChild(deviceBadge);
+
+  const progCol = document.createElement("div");
+  progCol.className = "queue-track-progress-col";
+  const bar = document.createElement("div");
+  bar.className = "progress-bar sm";
+  const fill = document.createElement("div");
+  fill.className = "progress-fill";
+  bar.appendChild(fill);
+  const pctEl = document.createElement("span");
+  pctEl.className = "queue-track-pct";
+  progCol.appendChild(bar);
+  progCol.appendChild(pctEl);
+
+  const metricsEl = document.createElement("div");
+  metricsEl.className = "queue-track-metrics";
+
+  const statusCol = document.createElement("div");
+  const statusBadge = document.createElement("span");
+  statusCol.appendChild(statusBadge);
+
+  row.appendChild(nameCol);
+  row.appendChild(deviceCol);
+  row.appendChild(progCol);
+  row.appendChild(metricsEl);
+  row.appendChild(statusCol);
+
+  return {
+    row,
+    nameCol,
+    indexEl,
+    filenameEl,
+    deviceBadge,
+    fill,
+    pctEl,
+    metricsEl,
+    statusBadge,
+  };
+}
+
+function patchTrackRowRefs(refs, track) {
+  if (refs.indexEl.textContent !== track.indexLabel) {
+    refs.indexEl.textContent = track.indexLabel;
+  }
+  if (refs.filenameEl.textContent !== track.name) {
+    refs.filenameEl.textContent = track.name;
+    refs.nameCol.title = track.name;
+  }
+
+  const devText = track.deviceId || "—";
+  const devClass = track.deviceId ? "badge badge-info mono" : "badge mono";
+  if (refs.deviceBadge.className !== devClass) {
+    refs.deviceBadge.className = devClass;
+  }
+  if (refs.deviceBadge.textContent !== devText) {
+    refs.deviceBadge.textContent = devText;
+  }
+
+  const fillClass = track.isSuccess
+    ? "progress-fill is-success"
+    : track.isFailed
+      ? "progress-fill is-danger"
+      : track.statusCode === "queued"
+        ? "progress-fill is-queued"
+        : "progress-fill is-active";
+  if (refs.fill.className !== fillClass) {
+    refs.fill.className = fillClass;
+  }
+  refs.fill.style.width = `${track.percent}%`;
+
+  const pctStr = `${track.percent}%`;
+  if (refs.pctEl.textContent !== pctStr) {
+    refs.pctEl.textContent = pctStr;
+  }
+
+  let metricsStr = i18n.t(`stages.${track.statusCode}`);
+  if (track.statusCode === "transcribing") {
+    const parts = [];
+    if (track.rtfx !== null && track.rtfx !== undefined && Number(track.rtfx) > 0) {
+      parts.push(`${Number(track.rtfx).toFixed(1)}x`);
+    }
+    if (track.eta) {
+      parts.push(`ETA ${track.eta}`);
+    }
+    metricsStr = parts.length ? parts.join(" · ") : metricsStr;
+  }
+  if (refs.metricsEl.textContent !== metricsStr) {
+    refs.metricsEl.textContent = metricsStr;
+  }
+
+  patchStageBadge(refs.statusBadge, track.statusCode);
+}
+
+function createQueueGroupRefs(groupKey) {
+  const card = document.createElement("div");
+  card.className = "queue-group-card";
+  card.dataset.groupKey = groupKey;
 
   const topRow = document.createElement("div");
   topRow.className = "row-between";
@@ -1459,159 +1908,252 @@ function buildJobQueueRow(job) {
   const titleWrap = document.createElement("div");
   titleWrap.className = "row";
   titleWrap.style.gap = "0.5rem";
+  titleWrap.style.minWidth = "0";
+  titleWrap.style.flex = "1";
 
   const titleEl = document.createElement("strong");
-  titleEl.textContent = job.title || job.id;
+  titleEl.className = "mono text-truncate";
+  const modeBadge = document.createElement("span");
+  modeBadge.className = "badge";
+  const stageBadge = document.createElement("span");
+  const ttlBadge = document.createElement("span");
+  ttlBadge.className = "ttl-pill";
+  ttlBadge.hidden = true;
+
   titleWrap.appendChild(titleEl);
+  titleWrap.appendChild(modeBadge);
+  titleWrap.appendChild(stageBadge);
+  titleWrap.appendChild(ttlBadge);
 
-  if (job.mode) {
-    const modeBadge = document.createElement("span");
-    modeBadge.className = "badge";
-    const modeKey =
-      job.mode === "single" && job.effective_config?.diarization?.enabled
-        ? "simple.modes.diarize.title"
-        : `simple.modes.${job.mode}.title`;
-    const modeLabel = i18n.t(modeKey);
-    modeBadge.textContent = modeLabel === modeKey ? job.mode : modeLabel;
-    titleWrap.appendChild(modeBadge);
-  }
+  const headerActions = document.createElement("div");
+  headerActions.className = "row";
+  headerActions.style.gap = "0.4rem";
 
-  const assignedDevice = job.progress?.device_id || job.device_id;
-  if (assignedDevice && ACTIVE_STATUSES.has(job.status)) {
-    const devBadge = document.createElement("span");
-    devBadge.className = assignedDevice.startsWith("cuda")
-      ? "badge badge-gpu mono"
-      : "badge badge-cpu mono";
-    devBadge.textContent = assignedDevice;
-    titleWrap.appendChild(devBadge);
-  }
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  toggleBtn.className = "btn btn-sm";
+  toggleBtn.hidden = true;
 
-  const stageCode =
-    ACTIVE_STATUSES.has(job.status) && job.stage ? job.stage : job.status || "queued";
-  const statusBadge = createStageBadge(stageCode);
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "btn btn-danger btn-sm";
+  cancelBtn.textContent = i18n.t("common.cancel");
+
+  const openBtn = document.createElement("button");
+  openBtn.type = "button";
+  openBtn.className = "btn btn-primary btn-sm";
+  openBtn.textContent = i18n.t("simple.open_viewer");
+
+  const dismissBtn = document.createElement("button");
+  dismissBtn.type = "button";
+  dismissBtn.className = "btn btn-sm";
+  dismissBtn.textContent = "Dismiss";
+
+  headerActions.appendChild(toggleBtn);
+  headerActions.appendChild(cancelBtn);
+  headerActions.appendChild(openBtn);
+  headerActions.appendChild(dismissBtn);
 
   topRow.appendChild(titleWrap);
-  topRow.appendChild(statusBadge);
-  item.appendChild(topRow);
+  topRow.appendChild(headerActions);
+  card.appendChild(topRow);
 
-  if (ACTIVE_STATUSES.has(job.status)) {
-    const progress = job.progress || {};
-    const processed = Number(progress.processed_ms || 0);
-    const total = Number(progress.total_ms || 0);
-    const percent =
-      typeof progress.percent === "number"
-        ? progress.percent
-        : total > 0
-          ? Math.min(100, Math.round((processed / total) * 100))
-          : 0;
-    const rtfx = progress.rtfx ?? null;
-    const eta = computeEta(processed, total, rtfx);
+  const bar = document.createElement("div");
+  bar.className = "progress-bar";
+  const fill = document.createElement("div");
+  fill.className = "progress-fill";
+  bar.appendChild(fill);
+  card.appendChild(bar);
 
-    const progressWrap = document.createElement("div");
-    progressWrap.className = "stack";
-    progressWrap.style.gap = "0.35rem";
-    progressWrap.style.marginTop = "0.65rem";
+  const meta = document.createElement("div");
+  meta.className = "progress-meta";
+  const summaryEl = document.createElement("span");
+  const rightMetaEl = document.createElement("span");
+  meta.appendChild(summaryEl);
+  meta.appendChild(rightMetaEl);
+  card.appendChild(meta);
 
-    const bar = document.createElement("div");
-    bar.className = "progress-bar";
-    const fill = document.createElement("div");
-    fill.className = "progress-fill";
-    fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
-    bar.appendChild(fill);
-    progressWrap.appendChild(bar);
+  const tracksContainer = document.createElement("div");
+  tracksContainer.className = "queue-tracks-container";
+  tracksContainer.hidden = true;
+  card.appendChild(tracksContainer);
 
-    const meta = document.createElement("div");
-    meta.className = "progress-meta";
+  const refs = {
+    card,
+    titleEl,
+    modeBadge,
+    stageBadge,
+    ttlBadge,
+    toggleBtn,
+    cancelBtn,
+    openBtn,
+    dismissBtn,
+    fill,
+    summaryEl,
+    rightMetaEl,
+    tracksContainer,
+    trackRowsByKey: new Map(),
+    currentGroup: null,
+  };
 
-    const leftMeta = document.createElement("span");
-    leftMeta.textContent = `${percent}%`;
-    meta.appendChild(leftMeta);
-
-    const rightParts = [];
-    if (rtfx !== null && rtfx !== undefined && Number(rtfx) > 0) {
-      rightParts.push(`RTFx ${Number(rtfx).toFixed(1)}x`);
+  toggleBtn.addEventListener("click", () => {
+    if (collapsedGroupKeys.has(groupKey)) {
+      collapsedGroupKeys.delete(groupKey);
+    } else {
+      collapsedGroupKeys.add(groupKey);
     }
-    if (eta) {
-      rightParts.push(`ETA ${eta}`);
+    if (refs.currentGroup) {
+      patchQueueGroupRefs(refs, refs.currentGroup, Date.now());
     }
-    const rightMeta = document.createElement("span");
-    rightMeta.textContent = rightParts.join(" · ");
-    meta.appendChild(rightMeta);
+  });
 
-    progressWrap.appendChild(meta);
-    item.appendChild(progressWrap);
-  }
+  cancelBtn.addEventListener("click", () => {
+    const g = refs.currentGroup;
+    if (!g) return;
+    for (const j of g.jobs) {
+      if (ACTIVE_STATUSES.has(j.status) && j.status !== "cancelling") {
+        void handleCancelJob(j.id);
+      }
+    }
+  });
 
-  if (
-    (job.status === "failed" || job.status === "completed_partial") &&
-    (job.error_code || job.error_detail)
-  ) {
-    const errText = document.createElement("div");
-    errText.className = "help-text";
-    errText.style.marginTop = "0.45rem";
-    errText.textContent = i18n.translateError({
-      error_code: job.error_code,
-      error_params: job.error_params,
-      detail: job.error_detail,
-    });
-    item.appendChild(errText);
-  }
+  openBtn.addEventListener("click", () => {
+    const g = refs.currentGroup;
+    if (!g?.primaryJob) return;
+    store.setState({ selectedJobId: g.primaryJob.id, activeTab: "viewer" });
+  });
 
-  const actions = document.createElement("div");
-  actions.className = "row";
-  actions.style.justifyContent = "flex-end";
-  actions.style.marginTop = "0.65rem";
+  dismissBtn.addEventListener("click", () => {
+    dismissedGroupKeys.add(groupKey);
+    renderMonitor();
+  });
 
-  if (ACTIVE_STATUSES.has(job.status) && job.status !== "cancelling") {
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "btn btn-danger btn-sm";
-    cancelBtn.disabled = formState.cancellingIds.has(job.id);
-    cancelBtn.textContent = i18n.t("common.cancel");
-    cancelBtn.addEventListener("click", () => {
-      void handleCancelJob(job.id);
-    });
-    actions.appendChild(cancelBtn);
-  }
-
-  if (job.status === "completed" || job.status === "completed_partial") {
-    const openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.className = "btn btn-primary btn-sm";
-    openBtn.textContent = i18n.t("simple.open_viewer");
-    openBtn.addEventListener("click", () => {
-      store.setState({ selectedJobId: job.id, activeTab: "viewer" });
-    });
-    actions.appendChild(openBtn);
-  }
-
-  if (actions.childElementCount > 0) {
-    item.appendChild(actions);
-  }
-
-  return item;
+  return refs;
 }
 
-function renderMonitor() {
-  if (!monitorHost) {
-    return;
+function patchQueueGroupRefs(refs, group, nowMs) {
+  refs.currentGroup = group;
+
+  if (refs.titleEl.textContent !== group.title) {
+    refs.titleEl.textContent = group.title;
+    refs.titleEl.title = group.title;
+  }
+
+  const modeKey =
+    group.mode === "single" && group.primaryJob.effective_config?.diarization?.enabled
+      ? "simple.modes.diarize.title"
+      : `simple.modes.${group.mode}.title`;
+  const modeLabel = i18n.t(modeKey) === modeKey ? group.mode : i18n.t(modeKey);
+  if (refs.modeBadge.textContent !== modeLabel) {
+    refs.modeBadge.textContent = modeLabel;
+  }
+
+  patchStageBadge(refs.stageBadge, group.statusCode);
+
+  if (group.allTerminal && group.finishedAtMs > 0) {
+    const remMs = Math.max(0, QUEUE_TTL_MS - (nowMs - group.finishedAtMs));
+    refs.ttlBadge.hidden = false;
+    refs.ttlBadge.textContent = formatCountdownMMSS(remMs);
+    refs.card.classList.add("is-expiring");
+  } else {
+    refs.ttlBadge.hidden = true;
+    refs.card.classList.remove("is-expiring");
+  }
+
+  const hasMultiTracks = group.childTracks.length > 1;
+  const isCollapsed = collapsedGroupKeys.has(group.key);
+  refs.toggleBtn.hidden = !hasMultiTracks;
+  if (hasMultiTracks) {
+    const toggleLabel = isCollapsed ? `▸ ${group.childTracks.length}` : "▾ Tracks";
+    if (refs.toggleBtn.textContent !== toggleLabel) {
+      refs.toggleBtn.textContent = toggleLabel;
+    }
+  }
+
+  const canCancel = group.jobs.some((j) => ACTIVE_STATUSES.has(j.status) && j.status !== "cancelling");
+  refs.cancelBtn.hidden = !canCancel;
+  refs.cancelBtn.disabled = group.jobs.some((j) => formState.cancellingIds.has(j.id));
+
+  const canOpen =
+    group.jobs.length === 1 &&
+    (group.primaryJob.status === "completed" || group.primaryJob.status === "completed_partial");
+  refs.openBtn.hidden = !canOpen;
+  refs.dismissBtn.hidden = !group.allTerminal;
+
+  const isSuccessGroup =
+    group.allTerminal &&
+    group.jobs.every((j) => j.status === "completed" || j.status === "completed_partial");
+  const isFailedGroup =
+    group.allTerminal &&
+    group.jobs.some((j) => j.status === "failed" || j.status === "cancelled");
+  const hasRunning = group.childTracks.some((t) => t.statusCode === "transcribing");
+
+  const fillClass = isSuccessGroup
+    ? "progress-fill is-success"
+    : isFailedGroup
+      ? "progress-fill is-danger"
+      : hasRunning
+        ? "progress-fill is-active"
+        : "progress-fill is-queued";
+  if (refs.fill.className !== fillClass) {
+    refs.fill.className = fillClass;
+  }
+  refs.fill.style.width = `${group.globalPct}%`;
+
+  const doneCount = group.childTracks.filter((t) => t.isSuccess).length;
+  const runCount = group.childTracks.filter((t) => t.statusCode === "transcribing").length;
+  const queuedCount = group.childTracks.filter((t) => t.statusCode === "queued").length;
+
+  const summaryParts = [`${group.globalPct}%`];
+  if (hasMultiTracks) {
+    summaryParts.push(`${doneCount}/${group.childTracks.length} completed`);
+    if (runCount > 0) summaryParts.push(`${runCount} running`);
+    if (queuedCount > 0) summaryParts.push(`${queuedCount} queued`);
+  }
+  const summaryStr = summaryParts.join(" · ");
+  if (refs.summaryEl.textContent !== summaryStr) {
+    refs.summaryEl.textContent = summaryStr;
+  }
+
+  refs.tracksContainer.hidden = !hasMultiTracks || isCollapsed;
+  if (hasMultiTracks && !isCollapsed) {
+    const seenTrackKeys = new Set();
+    let prevRowNode = null;
+    for (const track of group.childTracks) {
+      seenTrackKeys.add(track.key);
+      let tRefs = refs.trackRowsByKey.get(track.key);
+      if (!tRefs) {
+        tRefs = createTrackRowRefs(track.key);
+        refs.trackRowsByKey.set(track.key, tRefs);
+      }
+      patchTrackRowRefs(tRefs, track);
+      if (tRefs.row.parentElement !== refs.tracksContainer) {
+        refs.tracksContainer.insertBefore(
+          tRefs.row,
+          prevRowNode ? prevRowNode.nextSibling : refs.tracksContainer.firstChild
+        );
+      }
+      prevRowNode = tRefs.row;
+    }
+    for (const [k, tRefs] of refs.trackRowsByKey.entries()) {
+      if (!seenTrackKeys.has(k)) {
+        tRefs.row.remove();
+        refs.trackRowsByKey.delete(k);
+      }
+    }
+  }
+}
+
+function ensureMonitorShell() {
+  if (monitorRefs && monitorRefs.root === monitorHost && monitorRefs.queueCard.isConnected) {
+    return monitorRefs;
   }
 
   monitorHost.textContent = "";
 
-  const state = store.getState();
-  const devices = Array.isArray(state.devices) ? state.devices : [];
-  const jobs = Array.isArray(state.jobs) ? state.jobs : [];
-  const jobsById = new Map(jobs.map((job) => [job.id, job]));
-
-  if (devices.length > 0) {
-    const devicesGrid = document.createElement("div");
-    devicesGrid.className = devices.length >= 3 ? "grid-3" : "grid-2";
-    for (const device of devices) {
-      devicesGrid.appendChild(buildDeviceCard(device, jobsById));
-    }
-    monitorHost.appendChild(devicesGrid);
-  }
+  const devicesGrid = document.createElement("div");
+  devicesGrid.className = "devices-grid";
+  monitorHost.appendChild(devicesGrid);
 
   const queueCard = document.createElement("div");
   queueCard.className = "card";
@@ -1624,29 +2166,123 @@ function renderMonitor() {
   queueHeader.appendChild(queueTitle);
   queueCard.appendChild(queueHeader);
 
-  const activeJobs = jobs.filter((job) => ACTIVE_STATUSES.has(job.status));
-  const recentFinished = jobs
-    .filter((job) => TERMINAL_STATUSES.has(job.status))
-    .slice(0, 5);
-  const visibleJobs = [...activeJobs, ...recentFinished].slice(0, 10);
-
   const queueBody = document.createElement("div");
-  queueBody.className = "card-body";
+  queueBody.className = "card-body stack";
+  queueBody.style.gap = "0.75rem";
 
-  if (visibleJobs.length === 0) {
-    const emptyEl = document.createElement("p");
-    emptyEl.className = "muted";
-    emptyEl.style.margin = "0";
-    emptyEl.textContent = i18n.t("simple.queue_empty");
-    queueBody.appendChild(emptyEl);
-  } else {
-    for (const job of visibleJobs) {
-      queueBody.appendChild(buildJobQueueRow(job));
-    }
-  }
+  const emptyEl = document.createElement("p");
+  emptyEl.className = "muted";
+  emptyEl.style.margin = "0";
+  emptyEl.textContent = i18n.t("simple.queue_empty");
+  queueBody.appendChild(emptyEl);
 
   queueCard.appendChild(queueBody);
   monitorHost.appendChild(queueCard);
+
+  monitorRefs = {
+    root: monitorHost,
+    devicesGrid,
+    deviceCardsById: new Map(),
+    queueCard,
+    queueTitle,
+    queueBody,
+    emptyEl,
+    queueGroupsByKey: new Map(),
+  };
+  return monitorRefs;
+}
+
+function syncTtlTimer(hasExpiringGroups) {
+  if (hasExpiringGroups && ttlTimerId === null) {
+    ttlTimerId = window.setInterval(() => {
+      if (!rootContainer || !rootContainer.isConnected) {
+        window.clearInterval(ttlTimerId);
+        ttlTimerId = null;
+        return;
+      }
+      renderMonitor();
+    }, 1000);
+  } else if (!hasExpiringGroups && ttlTimerId !== null) {
+    window.clearInterval(ttlTimerId);
+    ttlTimerId = null;
+  }
+}
+
+function renderMonitor() {
+  if (!monitorHost) {
+    return;
+  }
+
+  const refs = ensureMonitorShell();
+  const state = store.getState();
+  const devices = Array.isArray(state.devices) ? state.devices : [];
+  const jobs = Array.isArray(state.jobs) ? state.jobs : [];
+  const jobsById = new Map(jobs.map((job) => [job.id, job]));
+
+  refs.devicesGrid.hidden = devices.length === 0;
+  refs.devicesGrid.classList.toggle("has-many", devices.length >= 3);
+
+  const seenDeviceIds = new Set();
+  for (const device of devices) {
+    const devId = device.id || (device.kind === "cuda" ? "cuda" : "cpu");
+    seenDeviceIds.add(devId);
+    let dRefs = refs.deviceCardsById.get(devId);
+    if (!dRefs) {
+      dRefs = createDeviceCardRefs(devId);
+      refs.deviceCardsById.set(devId, dRefs);
+      refs.devicesGrid.appendChild(dRefs.card);
+    }
+    patchDeviceCardRefs(dRefs, device, jobsById);
+  }
+  for (const [devId, dRefs] of refs.deviceCardsById.entries()) {
+    if (!seenDeviceIds.has(devId)) {
+      dRefs.card.remove();
+      refs.deviceCardsById.delete(devId);
+    }
+  }
+
+  const nowMs = Date.now();
+  const visibleGroups = buildQueueGroups(jobs, nowMs);
+
+  const queueTitleText = i18n.t("simple.queue_title");
+  if (refs.queueTitle.textContent !== queueTitleText) {
+    refs.queueTitle.textContent = queueTitleText;
+  }
+  const emptyText = i18n.t("simple.queue_empty");
+  if (refs.emptyEl.textContent !== emptyText) {
+    refs.emptyEl.textContent = emptyText;
+  }
+  refs.emptyEl.hidden = visibleGroups.length > 0;
+
+  const seenGroupKeys = new Set();
+  let prevGroupNode = refs.emptyEl;
+  let hasExpiring = false;
+
+  for (const group of visibleGroups) {
+    if (group.allTerminal) {
+      hasExpiring = true;
+    }
+    seenGroupKeys.add(group.key);
+    let gRefs = refs.queueGroupsByKey.get(group.key);
+    if (!gRefs) {
+      gRefs = createQueueGroupRefs(group.key);
+      refs.queueGroupsByKey.set(group.key, gRefs);
+    }
+    patchQueueGroupRefs(gRefs, group, nowMs);
+    if (gRefs.card.parentElement !== refs.queueBody) {
+      refs.queueBody.insertBefore(gRefs.card, prevGroupNode.nextSibling);
+    }
+    prevGroupNode = gRefs.card;
+  }
+
+  for (const [key, gRefs] of refs.queueGroupsByKey.entries()) {
+    if (!seenGroupKeys.has(key)) {
+      gRefs.card.remove();
+      refs.queueGroupsByKey.delete(key);
+    }
+  }
+
+  syncTtlTimer(hasExpiring);
 }
 
 export function render() {
@@ -1663,6 +2299,11 @@ export function mount(container) {
     unsubscribeStore();
     unsubscribeStore = null;
   }
+  if (ttlTimerId !== null) {
+    window.clearInterval(ttlTimerId);
+    ttlTimerId = null;
+  }
+  monitorRefs = null;
 
   rootContainer = container;
   rootContainer.textContent = "";
