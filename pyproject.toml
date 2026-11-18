@@ -19,14 +19,12 @@ dependencies = [
     "faster-whisper",
     "nvidia-cublas-cu12; sys_platform == 'linux'",
     "nvidia-cudnn-cu12; sys_platform == 'linux'",
-]
-
-[project.optional-dependencies]
-diarization = [
     "pyannote.audio",
     "torch",
     "torchaudio",
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest",
     "httpx",

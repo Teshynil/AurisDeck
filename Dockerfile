@@ -1,7 +1,5 @@
 FROM python:3.12-slim-bookworm
 
-ARG INSTALL_DIARIZATION=false
-
 ENV PATH="/opt/aurisdeck/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -22,11 +20,7 @@ WORKDIR /opt/aurisdeck
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-RUN if [ "$INSTALL_DIARIZATION" = "true" ]; then \
-        uv sync --frozen --no-dev --extra diarization --no-cache; \
-    else \
-        uv sync --frozen --no-dev --no-cache; \
-    fi
+RUN uv sync --frozen --no-dev --no-cache
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

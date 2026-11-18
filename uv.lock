@@ -144,10 +144,13 @@ dependencies = [
     { name = "faster-whisper" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'" },
+    { name = "pyannote-audio" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "rich" },
+    { name = "torch" },
+    { name = "torchaudio" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -156,11 +159,6 @@ dev = [
     { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
-]
-diarization = [
-    { name = "pyannote-audio" },
-    { name = "torch" },
-    { name = "torchaudio" },
 ]
 
 [package.metadata]
@@ -171,18 +169,18 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'" },
-    { name = "pyannote-audio", marker = "extra == 'diarization'" },
+    { name = "pyannote-audio" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pydantic-settings", specifier = ">=2.2" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-multipart" },
     { name = "rich" },
     { name = "ruff", marker = "extra == 'dev'" },
-    { name = "torch", marker = "extra == 'diarization'" },
-    { name = "torchaudio", marker = "extra == 'diarization'" },
+    { name = "torch" },
+    { name = "torchaudio" },
     { name = "uvicorn", extras = ["standard"] },
 ]
-provides-extras = ["diarization", "dev"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "av"
