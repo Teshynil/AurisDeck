@@ -720,7 +720,35 @@ body {
   width: 0%;
   background: var(--primary);
   border-radius: 999px;
-  transition: width 0.25s ease;
+  transition: width 600ms linear;
+  position: relative;
+}
+
+.progress-fill.is-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 100%
+  );
+  animation: progress-shimmer 1.6s infinite linear;
+}
+
+@keyframes progress-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.progress-fill.is-queued {
+  background: var(--muted);
+  opacity: 0.35;
 }
 
 .progress-fill.is-success {
@@ -1031,5 +1059,181 @@ body {
 
   .mode-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Devices grid (max 3 cards per row) & Grouped Active Queue */
+.devices-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.9rem;
+}
+
+.devices-grid.has-many {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.devices-grid .card {
+  min-width: 0;
+}
+
+.text-truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-job-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.device-job-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.device-job-name {
+  font-family: var(--font-mono);
+  font-weight: 650;
+  font-size: 0.88rem;
+  flex: 1;
+}
+
+.device-track-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.track-pill {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 0.08rem 0.4rem;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.device-track-name {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text);
+  opacity: 0.88;
+}
+
+.queue-group-card {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: opacity 400ms ease, transform 400ms ease, border-color 200ms ease;
+}
+
+.queue-group-card.is-expiring {
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.queue-group-card.is-fading-out {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.99);
+}
+
+.queue-tracks-container {
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.queue-track-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.65rem;
+  display: grid;
+  grid-template-columns: minmax(160px, 1.3fr) auto minmax(140px, 1.5fr) auto auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.queue-track-name-col {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.queue-track-progress-col {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 120px;
+}
+
+.queue-track-pct {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  width: 2.3rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.queue-track-metrics {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--muted);
+  white-space: nowrap;
+  min-width: 110px;
+  text-align: right;
+}
+
+.ttl-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--success);
+  background: var(--success-bg);
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+}
+
+.progress-bar.sm {
+  height: 0.38rem;
+}
+
+@media (max-width: 960px) {
+  .devices-grid.has-many {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .devices-grid,
+  .devices-grid.has-many {
+    grid-template-columns: 1fr;
+  }
+
+  .queue-track-row {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
   }
 }
