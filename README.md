@@ -236,11 +236,17 @@ aurisdeck profiles list --data-dir ./data
 ### `aurisdeck auth`
 
 ```bash
-# Reset stored password hash for a user
-aurisdeck auth reset-password --username default --data-dir ./data
+# List configured user accounts and roles
+aurisdeck auth list-users --data-dir ./data
+
+# Reset password for the primary administrator (or specify --username <user>)
+aurisdeck auth reset-password --data-dir ./data
+
+# Reset password inside Docker Compose
+docker compose exec aurisdeck aurisdeck auth reset-password
 
 # Generate a Bearer API token (displayed once)
-aurisdeck auth create-token --username default --data-dir ./data
+aurisdeck auth create-token --username <user> --data-dir ./data
 ```
 
 ### `aurisdeck pull-model`

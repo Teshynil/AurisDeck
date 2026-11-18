@@ -271,6 +271,25 @@ class UserRepo(_BaseRepo):
             row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
             return _row_to_user(row) if row is not None else None
 
+    def get_primary_admin(self) -> UserRecord | None:
+        """Return the initial/primary admin user regardless of renamed username."""
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM users
+                WHERE id = 'default' OR role = 'admin'
+                ORDER BY CASE WHEN id = 'default' THEN 0 ELSE 1 END, created_at ASC
+                LIMIT 1
+                """
+            ).fetchone()
+            return _row_to_user(row) if row is not None else None
+
+    def list_users(self) -> list[UserRecord]:
+        """List all user accounts ordered by creation time."""
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+            return [_row_to_user(row) for row in rows]
+
     def update_preferences(
         self,
         user_id: str,

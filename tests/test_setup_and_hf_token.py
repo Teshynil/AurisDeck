@@ -156,3 +156,41 @@ def test_setup_wizard_flow_and_admin_hf_token_management(tmp_path: Path) -> None
         assert clear_res.status_code == 200
         assert clear_res.json()["hf_token_configured"] is False
         assert clear_res.json()["hf_token_masked"] is None
+
+
+def test_cli_reset_password_defaults_to_primary_admin_and_list_users(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from aurisdeck.cli import main as cli_main
+
+    data_dir = tmp_path / "data"
+    app = _build_test_app(tmp_path)
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/v1/setup/complete",
+            json={
+                "locale": "es",
+                "username": "myadmin",
+                "password": "initialpassword",
+            },
+        )
+        assert res.status_code == 200
+
+    runner = CliRunner()
+    list_res = runner.invoke(cli_main, ["auth", "list-users", "--data-dir", str(data_dir)])
+    assert list_res.exit_code == 0, list_res.output
+    assert "myadmin\tadmin" in list_res.output
+
+    reset_res = runner.invoke(
+        cli_main,
+        ["auth", "reset-password", "--password", "newpassword123", "--data-dir", str(data_dir)],
+    )
+    assert reset_res.exit_code == 0, reset_res.output
+    assert "myadmin" in reset_res.output
+
+    with TestClient(app) as client:
+        login_res = client.post(
+            "/api/v1/auth/login",
+            json={"username": "myadmin", "password": "newpassword123"},
+        )
+        assert login_res.status_code == 200

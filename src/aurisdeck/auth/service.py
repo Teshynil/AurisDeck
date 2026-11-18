@@ -369,17 +369,27 @@ class AuthService:
             return self._user_repo.get_by_id("default") or self._user_repo.get_by_username("default")
         return None
 
-    def reset_password(self, new_password: str, username: str = "default") -> None:
-        """Hash and store a new password for the target user account."""
+    def reset_password(self, new_password: str, username: str | None = None) -> str:
+        """Hash and store a new password for the target user (or primary admin if omitted)."""
         if not new_password:
             raise AuthInvalidCredentialsError("Password must not be empty")
-        user = self._user_repo.get_by_username(username)
-        if user is None:
-            raise AuthUserNotFoundError(
-                f"User {username!r} not found",
-                error_params={"username": username},
-            )
+        cleaned = username.strip() if username else ""
+        if cleaned:
+            user = self._user_repo.get_by_username(cleaned)
+            if user is None:
+                raise AuthUserNotFoundError(
+                    f"User {cleaned!r} not found",
+                    error_params={"username": cleaned},
+                )
+        else:
+            user = self._user_repo.get_primary_admin()
+            if user is None:
+                raise AuthUserNotFoundError(
+                    "No administrator user found",
+                    error_params={"username": "admin"},
+                )
         self._user_repo.set_password_hash(user.id, hash_secret(new_password))
+        return user.username
 
     def rotate_api_token(self, username: str = "default") -> str:
         """Generate a new Bearer API token, store its SHA-256 hash, and return plaintext."""

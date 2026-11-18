@@ -1122,7 +1122,11 @@ def auth() -> None:
 
 
 @auth.command("reset-password")
-@click.option("--username", default="default", show_default=True, help="Target username.")
+@click.option(
+    "--username",
+    default=None,
+    help="Target username (defaults to primary administrator).",
+)
 @click.option("--password", default=None, help="New password (prompted securely if omitted).")
 @click.option(
     "--data-dir",
@@ -1132,8 +1136,8 @@ def auth() -> None:
     show_default=True,
     help="Persistent AurisDeck data directory.",
 )
-def reset_password(username: str, password: str | None, data_dir: Path) -> None:
-    """Reset the stored password hash for a user account."""
+def reset_password(username: str | None, password: str | None, data_dir: Path) -> None:
+    """Reset the stored password hash for a user account (or primary admin)."""
     resolved_password = password
     if resolved_password is None:
         resolved_password = click.prompt(
@@ -1150,11 +1154,32 @@ def reset_password(username: str, password: str | None, data_dir: Path) -> None:
     user_repo = UserRepo(paths.db_path)
     auth_service = AuthService(user_repo=user_repo, settings=settings)
     try:
-        auth_service.reset_password(resolved_password, username=username)
+        updated_username = auth_service.reset_password(resolved_password, username=username)
     except AuthError as exc:
         raise click.ClickException(f"{exc.error_code}: {exc}") from exc
 
-    click.echo(f"Password updated for user {username!r}.")
+    click.echo(f"Password updated for user {updated_username!r}.")
+
+
+@auth.command("list-users")
+@click.option(
+    "--data-dir",
+    type=click.Path(path_type=Path),
+    default=Path("./data"),
+    envvar="AURISDECK_DATA_DIR",
+    show_default=True,
+    help="Persistent AurisDeck data directory.",
+)
+def list_users(data_dir: Path) -> None:
+    """List configured AurisDeck user accounts."""
+    settings = Settings(data_dir=data_dir)
+    paths = DataPaths(settings.data_dir)
+    paths.ensure_dirs()
+    run_migrations(paths.db_path)
+
+    users = UserRepo(paths.db_path).list_users()
+    for user in users:
+        click.echo(f"{user.username}\t{user.role}")
 
 
 @auth.command("create-token")
