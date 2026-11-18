@@ -521,7 +521,9 @@ async function handleSubmit() {
 
     monitorHost?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
   } catch (err) {
-    const msg = i18n.translateError(err);
+    const baseMsg = i18n.translateError(err);
+    const detail = typeof err?.detail === "string" ? err.detail.trim() : "";
+    const msg = detail && !baseMsg.includes(detail) ? `${baseMsg} (${detail})` : baseMsg;
     formState.submitError = msg;
     store.addToast({
       type: "danger",

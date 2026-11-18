@@ -164,8 +164,15 @@ def _serialize_segment(segment: SegmentRecord) -> dict[str, Any]:
 
 def _serialize_job(job: JobRecord, paths: DataPaths | None = None) -> dict[str, Any]:
     has_mix = False
-    if paths is not None and job.mode == "multitrack" and job.media_retained:
-        has_mix = (paths.job_media_dir(job.id) / "mix.m4a").is_file()
+    has_logs = False
+    if paths is not None:
+        if job.mode == "multitrack" and job.media_retained:
+            has_mix = (paths.job_media_dir(job.id) / "mix.m4a").is_file()
+        try:
+            logs_dir = paths.job_logs_dir(job.id)
+            has_logs = logs_dir.is_dir() and any(p.is_file() for p in logs_dir.iterdir())
+        except ValueError:
+            has_logs = False
     return {
         "id": job.id,
         "owner_user_id": job.owner_user_id,
@@ -182,6 +189,7 @@ def _serialize_job(job: JobRecord, paths: DataPaths | None = None) -> dict[str, 
         "source_fingerprint": job.source_fingerprint,
         "media_retained": job.media_retained,
         "has_mix": has_mix,
+        "has_logs": has_logs,
         "effective_config": copy.deepcopy(job.effective_config),
         "error_code": job.error_code,
         "error_params": copy.deepcopy(job.error_params) if job.error_params is not None else None,
@@ -1551,6 +1559,59 @@ async def download_job_output(
         filename=resolved.name,
         content_disposition_type="attachment",
     )
+
+
+@router.get("/{job_id}/logs")
+async def get_job_logs(
+    job_id: str,
+    paths: Annotated[DataPaths, Depends(get_paths)],
+    job_repo: Annotated[JobRepo, Depends(get_job_repo)],
+    file: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """List or read per-job log files stored under data/outputs/<job_id>/logs/."""
+    _get_job_or_404(job_repo, job_id)
+    logs_dir = paths.job_logs_dir(job_id)
+    if not logs_dir.is_dir():
+        if file is not None:
+            raise ApiError(
+                status_code=404,
+                error_code="VALIDATION_ERROR",
+                error_params={"job_id": job_id, "file": file},
+                detail=f"Log file {file!r} not found for job {job_id!r}",
+            )
+        return {"job_id": job_id, "files": []}
+
+    logs_root = logs_dir.resolve()
+    if file is None:
+        entries = [
+            {"name": entry.name, "size_bytes": entry.stat().st_size}
+            for entry in sorted(logs_dir.iterdir(), key=lambda p: p.name)
+            if entry.is_file() and entry.resolve().is_relative_to(logs_root)
+        ]
+        return {"job_id": job_id, "files": entries}
+
+    if "/" in file or "\\" in file or ".." in file or not file.strip():
+        raise ApiError(
+            status_code=400,
+            error_code="VALIDATION_ERROR",
+            error_params={"file": file},
+            detail="Invalid log filename",
+        )
+
+    candidate = (logs_dir / file).resolve()
+    if not candidate.is_relative_to(logs_root) or not candidate.is_file():
+        raise ApiError(
+            status_code=404,
+            error_code="VALIDATION_ERROR",
+            error_params={"job_id": job_id, "file": file},
+            detail=f"Log file {file!r} not found for job {job_id!r}",
+        )
+
+    return {
+        "job_id": job_id,
+        "file": candidate.name,
+        "content": candidate.read_text(encoding="utf-8", errors="replace"),
+    }
 
 
 @router.delete("/{job_id}")

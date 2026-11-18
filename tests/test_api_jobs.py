@@ -801,3 +801,52 @@ def test_zip_excluded_tracks_in_multitrack_batch_and_single_modes(tmp_path: Path
         )
         assert single_resp.status_code == 201
         assert single_resp.json()["job"]["tracks"][0]["original_filename"] == "alice.flac"
+
+
+def test_unsafe_aup_logs_warning_and_job_logs_endpoint(tmp_path: Path) -> None:
+    app, coordinator = _build_jobs_test_app(tmp_path)
+    paths = DataPaths(tmp_path)
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("project.aup", '<?xml version="1.0"?><!DOCTYPE foo><project/>')
+        zf.writestr("track1.wav", b"RIFF" + b"\x00" * 36)
+
+    with TestClient(app) as client:
+        bad = client.post(
+            "/api/v1/jobs/inspect-zip",
+            files=[("file", ("bad.zip", zip_buf.getvalue(), "application/zip"))],
+        )
+        assert bad.status_code == 400
+        assert bad.json()["error_code"] == "INVALID_ARCHIVE"
+        assert "DOCTYPE/ENTITY" in bad.json()["detail"]
+
+        main_log = paths.logs / "aurisdeck.log"
+        assert main_log.is_file()
+        assert "INVALID_ARCHIVE" in main_log.read_text(encoding="utf-8")
+
+        created = client.post(
+            "/api/v1/jobs",
+            data={"mode": "single"},
+            files=[("files", ("audio.wav", b"RIFF" + b"\x00" * 36, "audio/wav"))],
+        )
+        assert created.status_code == 201
+        job_id = created.json()["job"]["id"]
+
+        empty_logs = client.get(f"/api/v1/jobs/{job_id}/logs")
+        assert empty_logs.status_code == 200
+        assert empty_logs.json() == {"job_id": job_id, "files": []}
+
+        log_dir = paths.job_logs_dir(job_id)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "asr-trk1.log").write_text("line 1\nline 2\n", encoding="utf-8")
+
+        listed = client.get(f"/api/v1/jobs/{job_id}/logs")
+        assert listed.status_code == 200
+        assert listed.json()["files"][0]["name"] == "asr-trk1.log"
+
+        fetched = client.get(f"/api/v1/jobs/{job_id}/logs", params={"file": "asr-trk1.log"})
+        assert fetched.status_code == 200
+        assert fetched.json()["content"] == "line 1\nline 2\n"
+
+        traversal = client.get(f"/api/v1/jobs/{job_id}/logs", params={"file": "../secret.txt"})
+        assert traversal.status_code == 400
