@@ -267,6 +267,9 @@
     "PROFILE_NOT_FOUND": "No se encontró el perfil '{profile_id}'.",
     "LOCALE_NOT_FOUND": "No se encontró el idioma '{code}'.",
     "INVALID_ARCHIVE": "El archivo comprimido está dañado o no tiene un formato soportado.",
+    "FOLDER_NOT_ALLOWED": "No se pueden subir carpetas. Arrastra o selecciona archivos individuales.",
+    "UNSUPPORTED_FILES": "Archivo(s) no soportado(s): {files}. Usa audio, video o ZIP compatibles.",
+    "FOLDER_AND_UNSUPPORTED_FILES": "No se permiten carpetas ni archivos no soportados ({files}).",
     "VALIDATION_ERROR": "Los datos enviados no superaron la validación.",
     "INTERNAL_ERROR": "Se produjo un error interno inesperado."
   }

@@ -267,6 +267,9 @@
     "PROFILE_NOT_FOUND": "Profile '{profile_id}' was not found.",
     "LOCALE_NOT_FOUND": "Locale '{code}' was not found.",
     "INVALID_ARCHIVE": "The archive is corrupted or uses an unsupported format.",
+    "FOLDER_NOT_ALLOWED": "Folders cannot be uploaded. Drag or select individual files.",
+    "UNSUPPORTED_FILES": "Unsupported file(s): {files}. Use supported audio, video, or ZIP files.",
+    "FOLDER_AND_UNSUPPORTED_FILES": "Folders and unsupported files are not allowed ({files}).",
     "VALIDATION_ERROR": "The submitted data failed validation.",
     "INTERNAL_ERROR": "An unexpected internal error occurred."
   }

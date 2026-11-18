@@ -12,6 +12,11 @@ const ZIP_SUPPORTED = supportsLocalZipInspection();
 const ACCEPTED_EXTENSIONS = ZIP_SUPPORTED
   ? ".m4a,.mp3,.wav,.flac,.ogg,.opus,.aac,.mp4,.mkv,.webm,.mov,.zip"
   : ".m4a,.mp3,.wav,.flac,.ogg,.opus,.aac,.mp4,.mkv,.webm,.mov";
+const ACCEPTED_EXTENSION_SET = new Set(
+  ACCEPTED_EXTENSIONS.split(",")
+    .map((ext) => ext.trim().toLowerCase())
+    .filter(Boolean)
+);
 
 const ACTIVE_STATUSES = new Set([
   "queued",
@@ -50,6 +55,7 @@ const formState = {
   inspectKey: "",
   inspectStatus: "idle",
   inspectError: "",
+  selectionWarning: "",
   isSubmitting: false,
   submitError: "",
   cancellingIds: new Set(),
@@ -307,10 +313,99 @@ async function analyzeSelectedFiles() {
   renderComposer();
 }
 
-function handleSelectedFiles(fileList) {
-  const nextFiles = Array.from(fileList || []);
-  formState.files = nextFiles;
+function getFileExtension(filename) {
+  const name = String(filename || "").trim();
+  const dotIdx = name.lastIndexOf(".");
+  if (dotIdx <= 0 || dotIdx === name.length - 1) {
+    return "";
+  }
+  return name.slice(dotIdx).toLowerCase();
+}
+
+function formatRejectedNames(names, maxVisible = 3) {
+  if (names.length <= maxVisible) {
+    return names.join(", ");
+  }
+  const visible = names.slice(0, maxVisible).join(", ");
+  return `${visible} (+${names.length - maxVisible})`;
+}
+
+function buildRejectionMessage(rejectedFolders, rejectedFiles) {
+  const hasFolders = rejectedFolders.length > 0;
+  const hasInvalidFiles = rejectedFiles.length > 0;
+  if (!hasFolders && !hasInvalidFiles) {
+    return "";
+  }
+  if (hasFolders && !hasInvalidFiles) {
+    return i18n.t("errors.FOLDER_NOT_ALLOWED");
+  }
+  const filesSummary = formatRejectedNames(rejectedFiles);
+  if (hasFolders && hasInvalidFiles) {
+    return i18n.t("errors.FOLDER_AND_UNSUPPORTED_FILES", { files: filesSummary });
+  }
+  return i18n.t("errors.UNSUPPORTED_FILES", { files: filesSummary });
+}
+
+function extractDroppedFiles(dataTransfer) {
+  const items = dataTransfer?.items ? Array.from(dataTransfer.items) : [];
+  const candidateFiles = [];
+  const rejectedFolders = [];
+
+  if (items.length > 0 && items.some((item) => typeof item.webkitGetAsEntry === "function")) {
+    for (const item of items) {
+      if (item.kind && item.kind !== "file") {
+        continue;
+      }
+      const entry = typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null;
+      if (entry?.isDirectory) {
+        rejectedFolders.push(entry.name || "folder");
+        continue;
+      }
+      const file = typeof item.getAsFile === "function" ? item.getAsFile() : null;
+      if (file) {
+        candidateFiles.push(file);
+      }
+    }
+  } else {
+    candidateFiles.push(...Array.from(dataTransfer?.files || []));
+  }
+
+  return { candidateFiles, rejectedFolders };
+}
+
+function handleSelectedFiles(fileList, rejectedFolders = []) {
+  const candidates = Array.from(fileList || []);
+  const validFiles = [];
+  const rejectedFiles = [];
+
+  for (const file of candidates) {
+    const ext = getFileExtension(file?.name);
+    if (ACCEPTED_EXTENSION_SET.has(ext)) {
+      validFiles.push(file);
+    } else {
+      rejectedFiles.push(file?.name || "?");
+    }
+  }
+
+  const rejectionMessage = buildRejectionMessage(rejectedFolders, rejectedFiles);
+
+  if (validFiles.length === 0 && rejectionMessage) {
+    formState.files = [];
+    formState.resolvedEntries = [];
+    formState.multitrackRows = [];
+    formState.uiMode = "single";
+    formState.submitError = "";
+    formState.selectionWarning = "";
+    formState.inspectKey = "";
+    formState.inspectStatus = "error";
+    formState.inspectError = rejectionMessage;
+    renderComposer();
+    return;
+  }
+
+  formState.files = validFiles;
   formState.submitError = "";
+  formState.selectionWarning = rejectionMessage;
   formState.inspectKey = "";
   formState.inspectStatus = "idle";
   formState.inspectError = "";
@@ -518,6 +613,7 @@ async function handleSubmit() {
     formState.inspectKey = "";
     formState.inspectStatus = "idle";
     formState.inspectError = "";
+    formState.selectionWarning = "";
     formState.submitError = "";
 
     store.addToast({
@@ -613,8 +709,9 @@ function buildDropzoneBlock() {
   fileInput.accept = ACCEPTED_EXTENSIONS;
 
   fileInput.addEventListener("change", (event) => {
-    const selected = event.target.files;
-    if (selected && selected.length > 0) {
+    const selected = event.target.files ? Array.from(event.target.files) : [];
+    fileInput.value = "";
+    if (selected.length > 0) {
       handleSelectedFiles(selected);
     }
   });
@@ -635,9 +732,9 @@ function buildDropzoneBlock() {
   dropLabel.addEventListener("drop", (event) => {
     event.preventDefault();
     dropLabel.classList.remove("is-dragover");
-    const dropped = event.dataTransfer?.files;
-    if (dropped && dropped.length > 0) {
-      handleSelectedFiles(dropped);
+    const { candidateFiles, rejectedFolders } = extractDroppedFiles(event.dataTransfer);
+    if (candidateFiles.length > 0 || rejectedFolders.length > 0) {
+      handleSelectedFiles(candidateFiles, rejectedFolders);
     }
   });
 
@@ -705,6 +802,11 @@ function buildDropzoneBlock() {
     errEl.className = "form-error";
     errEl.textContent = formState.inspectError;
     block.appendChild(errEl);
+  } else if (formState.selectionWarning) {
+    const warnEl = document.createElement("div");
+    warnEl.className = "alert alert-warning";
+    warnEl.textContent = formState.selectionWarning;
+    block.appendChild(warnEl);
   }
 
   return block;
