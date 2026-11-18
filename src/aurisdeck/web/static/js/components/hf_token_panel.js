@@ -165,6 +165,7 @@ export function buildHfTokenPanel({
   optionalLabel = false,
   onInput = null,
   onVerify = null,
+  onVerifyResult = null,
   onClear = null,
 }) {
   let showToken = false;
@@ -181,6 +182,9 @@ export function buildHfTokenPanel({
     onInput: (event) => {
       verifyResult = null;
       refreshStatusPill();
+      if (typeof onVerifyResult === "function") {
+        onVerifyResult(null);
+      }
       if (typeof onInput === "function") {
         onInput(event.target.value);
       }
@@ -237,6 +241,9 @@ export function buildHfTokenPanel({
         verifyBtn.disabled = false;
         verifyBtn.textContent = t("hf_token.verify_btn");
         refreshStatusPill();
+        if (typeof onVerifyResult === "function") {
+          onVerifyResult(verifyResult);
+        }
       }
     },
   });

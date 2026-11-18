@@ -56,9 +56,11 @@ export function mountSetupWizard(container, { locales = [], initialLocale = "es"
     showPassword: false,
     showConfirm: false,
     hfToken: "",
+    hfVerified: false,
     error: "",
     submitting: false,
   };
+  let nextBtnEl = null;
 
   const availableLocales =
     Array.isArray(locales) && locales.length > 0
@@ -242,8 +244,18 @@ export function mountSetupWizard(container, { locales = [], initialLocale = "es"
         optionalLabel: true,
         onInput: (val) => {
           state.hfToken = val;
+          state.hfVerified = false;
+          if (nextBtnEl && state.step === 3) {
+            nextBtnEl.disabled = true;
+          }
         },
         onVerify: (token) => api.setupVerifyHfToken(token),
+        onVerifyResult: (result) => {
+          state.hfVerified = Boolean(result && result.valid && state.hfToken.trim());
+          if (nextBtnEl && state.step === 3) {
+            nextBtnEl.disabled = !state.hfVerified;
+          }
+        },
       })
     );
   }
@@ -363,6 +375,7 @@ export function mountSetupWizard(container, { locales = [], initialLocale = "es"
                   textContent: t("setup.skip"),
                   onClick: () => {
                     state.hfToken = "";
+                    state.hfVerified = false;
                     state.error = "";
                     state.step = 4;
                     render();
@@ -370,27 +383,32 @@ export function mountSetupWizard(container, { locales = [], initialLocale = "es"
                 })
               : null,
             state.step < 4
-              ? el("button", {
+              ? (nextBtnEl = el("button", {
                   type: "button",
                   className: "btn btn-primary",
                   textContent: t("setup.next"),
+                  disabled: state.step === 3 && !state.hfVerified,
                   onClick: () => {
                     if (state.step === 2 && !validateStep2()) {
                       render();
+                      return;
+                    }
+                    if (state.step === 3 && !state.hfVerified) {
                       return;
                     }
                     state.error = "";
                     state.step += 1;
                     render();
                   },
-                })
-              : el("button", {
+                }))
+              : ((nextBtnEl = null),
+                el("button", {
                   type: "button",
                   className: "btn btn-primary",
                   textContent: state.submitting ? t("common.loading") : t("setup.finish"),
                   disabled: state.submitting,
                   onClick: () => void handleFinish(),
-                })
+                }))
           )
         )
       )
