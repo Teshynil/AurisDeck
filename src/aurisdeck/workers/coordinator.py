@@ -1347,6 +1347,36 @@ class Coordinator:
         error_params: Mapping[str, Any] | None = None,
         error_detail: str | None = None,
     ) -> None:
+        with task_file_handler(
+            self._paths.job_logs_dir(job.id) / "coordinator.log",
+            level=self._settings.log_level,
+        ):
+            logger.info(
+                "Finalizing merge and export for job=%s (diarization_failed=%s)",
+                job.id,
+                diarization_failed,
+            )
+            self._finalize_merge_and_export_impl(
+                job,
+                turns,
+                diarization_failed=diarization_failed,
+                diarization_completed=diarization_completed,
+                error_code=error_code,
+                error_params=error_params,
+                error_detail=error_detail,
+            )
+
+    def _finalize_merge_and_export_impl(
+        self,
+        job: JobRecord,
+        turns: list[SpeakerTurn] | None,
+        *,
+        diarization_failed: bool,
+        diarization_completed: bool = False,
+        error_code: str | None = None,
+        error_params: Mapping[str, Any] | None = None,
+        error_detail: str | None = None,
+    ) -> None:
         self._job_repo.update_job_status(job.id, "merging")
         self._event_bus.publish(
             "job.stage",

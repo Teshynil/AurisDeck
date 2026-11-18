@@ -223,7 +223,7 @@ def run_worker_loop(
                         result.duration_ms,
                     )
                     event_q.put(WorkerAsrDoneEvent(device_id, task.job_id, task.track_id, result))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception(
                         "ASR task failed on %s for job=%s track=%s",
                         device_id,
@@ -286,7 +286,7 @@ def run_worker_loop(
                         len(turns),
                     )
                     event_q.put(WorkerDiarizeDoneEvent(device_id, task.job_id, turns))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception(
                         "Diarize task failed on %s for job=%s",
                         device_id,

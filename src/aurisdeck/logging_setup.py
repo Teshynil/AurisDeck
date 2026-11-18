@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -55,10 +55,8 @@ def _close_owned_handlers(target_logger: logging.Logger) -> None:
     for handler in list(target_logger.handlers):
         if getattr(handler, "_aurisdeck_owned", False):
             target_logger.removeHandler(handler)
-            try:
+            with suppress(OSError):
                 handler.close()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 def _sync_third_party_loggers(numeric_level: int) -> None:
@@ -196,9 +194,7 @@ def task_file_handler(
         yield resolved
     finally:
         pkg_logger.removeHandler(handler)
-        try:
+        with suppress(OSError):
             handler.flush()
             handler.close()
-        except Exception:  # noqa: BLE001
-            pass
         pkg_logger.setLevel(prev_level)

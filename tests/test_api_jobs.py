@@ -804,7 +804,7 @@ def test_zip_excluded_tracks_in_multitrack_batch_and_single_modes(tmp_path: Path
 
 
 def test_unsafe_aup_logs_warning_and_job_logs_endpoint(tmp_path: Path) -> None:
-    app, coordinator = _build_jobs_test_app(tmp_path)
+    app, _coordinator = _build_jobs_test_app(tmp_path)
     paths = DataPaths(tmp_path)
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w") as zf:
