@@ -23,6 +23,7 @@ from aurisdeck.config import Settings
 from aurisdeck.db.recovery import run_startup_recovery
 from aurisdeck.db.repositories import JobRecord, JobRepo, SegmentRecord, SegmentRepo
 from aurisdeck.export.job_outputs import render_job_outputs
+from aurisdeck.logging_setup import task_file_handler
 from aurisdeck.media.ffmpeg import MediaInvalidError, extract_wav_16k, mix_multitrack_audio
 from aurisdeck.media.ingest import SUPPORTED_MEDIA_EXTENSIONS
 from aurisdeck.pipeline.merger import TranscriptMerger
@@ -520,6 +521,10 @@ class Coordinator:
                 self._cancel_flag_dict,
                 float(self._settings.model_idle_unload_seconds),
                 self._backend_factory,
+                str(self._paths.worker_log_path(device_id)),
+                str(self._settings.log_level),
+                int(self._settings.log_max_bytes),
+                int(self._settings.log_backup_count),
             ),
             daemon=True,
             name=f"aurisdeck-worker-{device_id}",
@@ -1088,16 +1093,37 @@ class Coordinator:
                 return
 
             is_diarizing_error = job.status == "diarizing" or event.track_id is None
+            log_ref = self._format_log_ref(event.log_path)
+            effective_detail = (
+                f"{event.detail} (log: {log_ref})" if log_ref and event.detail else (event.detail or (f"See log: {log_ref}" if log_ref else ""))
+            )
             if is_diarizing_error and all(t.asr_status == "completed" for t in job.tracks):
+                logger.warning(
+                    "Job %s diarization failed on %s (%s): %s | log=%s",
+                    event.job_id,
+                    event.device_id,
+                    event.error_code,
+                    event.detail,
+                    log_ref or "-",
+                )
                 self._finalize_merge_and_export(
                     job,
                     turns=None,
                     diarization_failed=True,
                     error_code=event.error_code,
                     error_params=event.error_params,
-                    error_detail=event.detail,
+                    error_detail=effective_detail,
                 )
             else:
+                logger.error(
+                    "Job %s failed on %s track=%s (%s): %s | log=%s",
+                    event.job_id,
+                    event.device_id,
+                    event.track_id or "-",
+                    event.error_code,
+                    event.detail,
+                    log_ref or "-",
+                )
                 with self._state_lock:
                     self._remove_pending_tasks_locked(event.job_id)
                     self._cancel_flag_dict[event.job_id] = True
@@ -1111,7 +1137,7 @@ class Coordinator:
                     diarization_status="failed" if is_diarizing_error else None,
                     error_code=event.error_code,
                     error_params=event.error_params,
-                    error_detail=event.detail,
+                    error_detail=effective_detail,
                 )
                 if not sibling_busy:
                     self._cleanup_job_tmp(event.job_id)
@@ -1121,7 +1147,8 @@ class Coordinator:
                     payload={
                         "error_code": event.error_code,
                         "error_params": event.error_params,
-                        "detail": event.detail,
+                        "detail": effective_detail,
+                        "log_path": log_ref,
                     },
                 )
 
@@ -1203,6 +1230,8 @@ class Coordinator:
                 context=task.asr_context,
                 cpu_threads=cpu_threads,
                 hf_endpoint=self._settings.hf_endpoint,
+                log_path=str(self._paths.job_logs_dir(job.id) / f"asr-{task.track_id}.log"),
+                log_level=str(self._settings.log_level),
             )
 
         diar_cfg = cfg.get("diarization", {})
@@ -1216,7 +1245,18 @@ class Coordinator:
             hf_endpoint=self._settings.hf_endpoint,
             min_speakers=diar_cfg.get("min_speakers"),
             max_speakers=diar_cfg.get("max_speakers"),
+            log_path=str(self._paths.job_logs_dir(job.id) / "diarize.log"),
+            log_level=str(self._settings.log_level),
         )
+
+    def _format_log_ref(self, log_path: str | None) -> str | None:
+        if not log_path:
+            return None
+        path = Path(log_path)
+        try:
+            return str(path.resolve().relative_to(self._paths.root.resolve()))
+        except ValueError:
+            return str(path)
 
     # ------------------------------------------------------------------
     # Merging, exporting, and context resolution

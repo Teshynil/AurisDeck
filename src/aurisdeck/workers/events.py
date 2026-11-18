@@ -107,6 +107,8 @@ class WorkerTranscribeTask:
     context: ASRContext
     cpu_threads: int = 0
     hf_endpoint: str | None = None
+    log_path: str | None = None
+    log_level: str = "INFO"
 
 
 @dataclass(slots=True)
@@ -121,6 +123,8 @@ class WorkerDiarizeTask:
     hf_endpoint: str | None = None
     min_speakers: int | None = None
     max_speakers: int | None = None
+    log_path: str | None = None
+    log_level: str = "INFO"
 
 
 @dataclass(slots=True)
@@ -189,6 +193,7 @@ class WorkerErrorEvent:
     error_code: str
     error_params: dict[str, Any] = field(default_factory=dict)
     detail: str = ""
+    log_path: str | None = None
 
 
 @dataclass(slots=True)

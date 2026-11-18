@@ -534,3 +534,45 @@ def test_worker_error_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
             detail="unexpected boom",
         )
     ]
+
+
+def test_worker_logs_traceback_to_task_log_and_bubbles_log_path(tmp_path: Path) -> None:
+    worker_log = tmp_path / "logs" / "worker-cpu.log"
+    task_log = tmp_path / "outputs" / "job-log-1" / "logs" / "asr-trk-1.log"
+
+    asr = FakeAsrBackend([])
+    asr.raise_on_transcribe = RuntimeError("kaboom inside backend")
+
+    task = _make_transcribe_task(job_id="job-log-1")
+    task.log_path = str(task_log)
+    task.log_level = "DEBUG"
+
+    task_q: queue.Queue[Any] = queue.Queue()
+    event_q: queue.Queue[Any] = queue.Queue()
+    task_q.put(task)
+    task_q.put(WorkerShutdownCommand())
+
+    run_worker_loop(
+        device_id="cpu",
+        cuda_visible_index=None,
+        task_q=task_q,
+        event_q=event_q,
+        cancel_flag_dict={},
+        backend_factory=lambda: (asr, FakeDiarizerBackend([])),
+        worker_log_path=str(worker_log),
+        log_level="INFO",
+    )
+
+    errors = [ev for ev in _drain_events(event_q) if isinstance(ev, WorkerErrorEvent)]
+    assert len(errors) == 1
+    assert errors[0].log_path == str(task_log)
+    assert errors[0].detail == "kaboom inside backend"
+
+    assert worker_log.is_file()
+    assert "Worker started device_id=cpu" in worker_log.read_text(encoding="utf-8")
+
+    assert task_log.is_file()
+    task_text = task_log.read_text(encoding="utf-8")
+    assert "Starting ASR task job=job-log-1 track=trk-1" in task_text
+    assert "Traceback (most recent call last):" in task_text
+    assert "RuntimeError: kaboom inside backend" in task_text
