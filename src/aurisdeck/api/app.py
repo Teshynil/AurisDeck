@@ -10,7 +10,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, Request, Response
+import anyio
+from fastapi import APIRouter, Depends, FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -110,6 +111,14 @@ class AdminSettingsPatch(BaseModel):
     cpu_threads: int | None = Field(default=None, ge=0)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] | None = None
     hf_token: str | None = None
+
+
+class ModelPullRequest(BaseModel):
+    """Payload to download or update a cached Whisper or Hugging Face model."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(min_length=1, max_length=256)
 
 
 def _system_settings_path(paths: DataPaths) -> Path:
@@ -498,6 +507,84 @@ def _build_core_router() -> APIRouter:
     ) -> dict[str, Any]:
         coordinator.unload_all_models()
         return {"status": "ok", "unloaded": True}
+
+    @router.get("/system/models")
+    async def list_system_models(
+        _admin: Annotated[dict[str, Any], Depends(require_admin)],
+        paths: Annotated[DataPaths, Depends(get_paths)],
+    ) -> dict[str, Any]:
+        from aurisdeck.storage.models_cache import list_cached_models
+
+        return await anyio.to_thread.run_sync(list_cached_models, paths.models)
+
+    @router.post("/system/models/pull")
+    async def pull_system_model(
+        body: ModelPullRequest,
+        _admin: Annotated[dict[str, Any], Depends(require_admin)],
+        paths: Annotated[DataPaths, Depends(get_paths)],
+        settings: Annotated[Settings, Depends(get_settings)],
+        system_settings_repo: Annotated[SystemSettingsRepo, Depends(get_system_settings_repo)],
+    ) -> dict[str, Any]:
+        from aurisdeck.storage.models_cache import pull_or_update_model
+
+        hf_token = system_settings_repo.get_hf_token()
+        try:
+            return await anyio.to_thread.run_sync(
+                lambda: pull_or_update_model(
+                    body.model,
+                    paths.models,
+                    hf_token=hf_token,
+                    hf_endpoint=settings.hf_endpoint,
+                )
+            )
+        except ValueError as exc:
+            raise ApiError(
+                status_code=400,
+                error_code="VALIDATION_ERROR",
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            raise ApiError(
+                status_code=502,
+                error_code="MODEL_LOAD_FAILED",
+                error_params={"model": body.model},
+                detail=str(exc),
+            ) from exc
+
+    @router.delete("/system/models")
+    async def delete_system_model(
+        repo_id: Annotated[str, Query(min_length=1, max_length=256)],
+        _admin: Annotated[dict[str, Any], Depends(require_admin)],
+        paths: Annotated[DataPaths, Depends(get_paths)],
+        coordinator: Annotated[Coordinator, Depends(get_coordinator)],
+    ) -> dict[str, Any]:
+        from aurisdeck.storage.models_cache import delete_cached_model
+
+        if hasattr(coordinator, "get_device_snapshots"):
+            busy = any(dev.get("state") == "busy" for dev in coordinator.get_device_snapshots())
+            if busy:
+                raise ApiError(
+                    status_code=409,
+                    error_code="MODEL_IN_USE",
+                    detail="Cannot delete cached models while a transcription job is running",
+                )
+
+        coordinator.unload_all_models()
+        try:
+            return await anyio.to_thread.run_sync(delete_cached_model, repo_id, paths.models)
+        except FileNotFoundError as exc:
+            raise ApiError(
+                status_code=404,
+                error_code="MODEL_NOT_FOUND",
+                error_params={"repo_id": repo_id},
+                detail=str(exc),
+            ) from exc
+        except ValueError as exc:
+            raise ApiError(
+                status_code=400,
+                error_code="VALIDATION_ERROR",
+                detail=str(exc),
+            ) from exc
 
     return router
 
