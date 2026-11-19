@@ -485,7 +485,7 @@ def _build_core_router() -> APIRouter:
         _admin: Annotated[dict[str, Any], Depends(require_admin)],
         coordinator: Annotated[Coordinator, Depends(get_coordinator)],
     ) -> dict[str, list[dict[str, Any]]]:
-        devices = [asdict(device) for device in coordinator.list_devices()]
+        devices = coordinator.get_device_snapshots()
         return {"devices": devices}
 
     @router.post("/system/unload-models")

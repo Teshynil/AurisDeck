@@ -120,8 +120,12 @@ def _utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _serialize_track(track: TrackRecord) -> dict[str, Any]:
-    return {
+def _serialize_track(
+    track: TrackRecord,
+    live_state: dict[str, Any] | None = None,
+    has_checkpoint: bool = False,
+) -> dict[str, Any]:
+    data = {
         "id": track.id,
         "job_id": track.job_id,
         "track_index": track.track_index,
@@ -133,6 +137,20 @@ def _serialize_track(track: TrackRecord) -> dict[str, Any]:
         "asr_status": track.asr_status,
         "asr_checkpoint_relpath": track.asr_checkpoint_relpath,
     }
+    if track.asr_status == "completed" or has_checkpoint:
+        data["status"] = "completed"
+        data["percent"] = 100
+    elif live_state is not None:
+        data["status"] = live_state.get("stage") or "transcribing"
+        data["device_id"] = live_state.get("device_id")
+        data["processed_ms"] = live_state.get("processed_ms", 0)
+        data["total_ms"] = live_state.get("total_ms", 0)
+        data["rtfx"] = live_state.get("rtfx")
+        data["percent"] = live_state.get("percent", 0)
+    else:
+        data["status"] = "queued"
+        data["percent"] = 0
+    return data
 
 
 def _serialize_speaker(speaker: SpeakerRecord) -> dict[str, Any]:
@@ -162,9 +180,14 @@ def _serialize_segment(segment: SegmentRecord) -> dict[str, Any]:
     }
 
 
-def _serialize_job(job: JobRecord, paths: DataPaths | None = None) -> dict[str, Any]:
+def _serialize_job(
+    job: JobRecord,
+    paths: DataPaths | None = None,
+    active_track_states: dict[tuple[str, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     has_mix = False
     has_logs = False
+    ckpt_dir: Path | None = None
     if paths is not None:
         if job.mode == "multitrack" and job.media_retained:
             has_mix = (paths.job_media_dir(job.id) / "mix.m4a").is_file()
@@ -173,6 +196,22 @@ def _serialize_job(job: JobRecord, paths: DataPaths | None = None) -> dict[str, 
             has_logs = logs_dir.is_dir() and any(p.is_file() for p in logs_dir.iterdir())
         except ValueError:
             has_logs = False
+        if job.status in {"transcribing", "diarizing", "merging", "exporting"}:
+            try:
+                ckpt_dir = paths.job_checkpoints_dir(job.id)
+            except ValueError:
+                ckpt_dir = None
+
+    serialized_tracks = []
+    for track in job.tracks:
+        live = active_track_states.get((job.id, track.id)) if active_track_states else None
+        has_ckpt = (
+            ckpt_dir is not None
+            and track.asr_status != "completed"
+            and (ckpt_dir / f"{track.id}.asr.json").is_file()
+        )
+        serialized_tracks.append(_serialize_track(track, live_state=live, has_checkpoint=has_ckpt))
+
     return {
         "id": job.id,
         "owner_user_id": job.owner_user_id,
@@ -197,7 +236,7 @@ def _serialize_job(job: JobRecord, paths: DataPaths | None = None) -> dict[str, 
         "created_at": job.created_at,
         "updated_at": job.updated_at,
         "completed_at": job.completed_at,
-        "tracks": [_serialize_track(track) for track in job.tracks],
+        "tracks": serialized_tracks,
         "speakers": [_serialize_speaker(speaker) for speaker in job.speakers],
     }
 
@@ -1151,6 +1190,7 @@ async def create_job(
 async def list_jobs(
     paths: Annotated[DataPaths, Depends(get_paths)],
     job_repo: Annotated[JobRepo, Depends(get_job_repo)],
+    coordinator: Annotated[Coordinator, Depends(get_coordinator)],
     status: Annotated[str | None, Query()] = None,
     batch_id: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -1163,8 +1203,12 @@ async def list_jobs(
         limit=limit,
         offset=offset,
     )
+    active_track_states = coordinator.get_active_track_states()
     return {
-        "jobs": [_serialize_job(job, paths=paths) for job in jobs],
+        "jobs": [
+            _serialize_job(job, paths=paths, active_track_states=active_track_states)
+            for job in jobs
+        ],
         "limit": limit,
         "offset": offset,
     }
@@ -1181,12 +1225,14 @@ async def get_job_detail(
     paths: Annotated[DataPaths, Depends(get_paths)],
     job_repo: Annotated[JobRepo, Depends(get_job_repo)],
     segment_repo: Annotated[SegmentRepo, Depends(get_segment_repo)],
+    coordinator: Annotated[Coordinator, Depends(get_coordinator)],
 ) -> dict[str, Any]:
     """Return full job metadata, tracks, speakers, transcript segments, and output formats."""
     job = _get_job_or_404(job_repo, job_id)
     segments = segment_repo.list_segments(job_id)
     available_formats = _scan_available_formats(paths, job_id)
-    payload = _serialize_job(job, paths=paths)
+    active_track_states = coordinator.get_active_track_states()
+    payload = _serialize_job(job, paths=paths, active_track_states=active_track_states)
     payload["segments"] = [_serialize_segment(seg) for seg in segments]
     payload["available_formats"] = available_formats
     return payload

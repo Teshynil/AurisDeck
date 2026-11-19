@@ -13,7 +13,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -146,6 +146,11 @@ class _WorkerHandle:
     current_job_id: str | None = None
     current_track_id: str | None = None
     current_kind: Literal["transcribe", "diarize"] | None = None
+    current_stage: str | None = None
+    processed_ms: int = 0
+    total_ms: int = 0
+    rtfx: float | None = None
+    percent: int = 0
 
 
 @dataclass(slots=True)
@@ -244,6 +249,73 @@ class Coordinator:
         if self._devices is None:
             self._devices = discover_devices()
         return list(self._devices)
+
+    def get_device_snapshots(self) -> list[dict[str, Any]]:
+        """Return compute devices enriched with live worker execution state."""
+        devices = self.list_devices()
+        with self._state_lock:
+            workers_snap = {
+                dev_id: {
+                    "busy": w.busy,
+                    "current_job_id": w.current_job_id,
+                    "current_track_id": w.current_track_id,
+                    "current_stage": w.current_stage,
+                    "processed_ms": w.processed_ms,
+                    "total_ms": w.total_ms,
+                    "rtfx": w.rtfx,
+                    "percent": w.percent,
+                }
+                for dev_id, w in self._workers.items()
+            }
+
+        snapshots: list[dict[str, Any]] = []
+        for dev in devices:
+            entry = asdict(dev)
+            w = workers_snap.get(dev.id)
+            if w and w["busy"] and w["current_job_id"]:
+                entry.update(
+                    {
+                        "state": "busy",
+                        "active_job_id": w["current_job_id"],
+                        "track_id": w["current_track_id"],
+                        "stage": w["current_stage"] or "transcribing",
+                        "processed_ms": w["processed_ms"],
+                        "total_ms": w["total_ms"],
+                        "rtfx": w["rtfx"],
+                        "percent": w["percent"],
+                    }
+                )
+            else:
+                entry.update(
+                    {
+                        "state": "idle",
+                        "active_job_id": None,
+                        "track_id": None,
+                        "stage": None,
+                        "processed_ms": 0,
+                        "total_ms": 0,
+                        "rtfx": None,
+                        "percent": 0,
+                    }
+                )
+            snapshots.append(entry)
+        return snapshots
+
+    def get_active_track_states(self) -> dict[tuple[str, str], dict[str, Any]]:
+        """Return a mapping of (job_id, track_id) -> live worker progress."""
+        with self._state_lock:
+            result: dict[tuple[str, str], dict[str, Any]] = {}
+            for dev_id, w in self._workers.items():
+                if w.busy and w.current_job_id and w.current_track_id:
+                    result[(w.current_job_id, w.current_track_id)] = {
+                        "device_id": dev_id,
+                        "stage": w.current_stage or "transcribing",
+                        "processed_ms": w.processed_ms,
+                        "total_ms": w.total_ms,
+                        "rtfx": w.rtfx,
+                        "percent": w.percent,
+                    }
+            return result
 
     def start(self) -> None:
         """Run startup recovery, spawn device workers, and start the coordinator loop."""
@@ -633,6 +705,10 @@ class Coordinator:
             return
 
         if isinstance(item, WorkerStageEvent):
+            with self._state_lock:
+                worker = self._workers.get(item.device_id)
+                if worker is not None and worker.current_job_id == item.job_id:
+                    worker.current_stage = item.stage
             self._event_bus.publish(
                 "job.stage",
                 job_id=item.job_id,
@@ -645,6 +721,19 @@ class Coordinator:
             return
 
         if isinstance(item, WorkerProgressEvent):
+            pct = (
+                min(100, round((item.processed_ms / item.total_ms) * 100))
+                if item.total_ms > 0
+                else 0
+            )
+            with self._state_lock:
+                worker = self._workers.get(item.device_id)
+                if worker is not None and worker.current_job_id == item.job_id:
+                    worker.current_stage = "transcribing"
+                    worker.processed_ms = item.processed_ms
+                    worker.total_ms = item.total_ms
+                    worker.rtfx = item.rtfx
+                    worker.percent = pct
             self._event_bus.publish(
                 "job.progress",
                 job_id=item.job_id,
@@ -948,6 +1037,11 @@ class Coordinator:
                 worker.current_job_id = None
                 worker.current_track_id = None
                 worker.current_kind = None
+                worker.current_stage = None
+                worker.processed_ms = 0
+                worker.total_ms = 0
+                worker.rtfx = None
+                worker.percent = 0
                 self._worker_done_cond.notify_all()
 
     def _on_asr_done(self, event: WorkerAsrDoneEvent) -> None:
@@ -1191,6 +1285,11 @@ class Coordinator:
             chosen_worker.current_job_id = task.job_id
             chosen_worker.current_track_id = task.track_id
             chosen_worker.current_kind = task.kind
+            chosen_worker.current_stage = "diarizing" if task.kind == "diarize" else "loading_model"
+            chosen_worker.processed_ms = 0
+            chosen_worker.total_ms = 0
+            chosen_worker.rtfx = None
+            chosen_worker.percent = 0
 
             worker_task = self._build_worker_task(job, task, chosen_worker.device_id)
             if task.kind == "diarize":
