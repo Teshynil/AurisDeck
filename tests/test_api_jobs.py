@@ -617,7 +617,6 @@ def test_cancel_retry_diarize_delete_and_404_job_not_found(tmp_path: Path) -> No
 
 def test_multitrack_mix_endpoints_generate_and_stream(tmp_path: Path) -> None:
     app, _stub = _build_jobs_test_app(tmp_path)
-    paths = DataPaths(tmp_path)
     with TestClient(app) as client:
         # Create a multitrack job with 2 tracks
         create_resp = client.post(

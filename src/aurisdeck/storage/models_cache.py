@@ -29,7 +29,7 @@ def list_cached_models(models_dir: Path) -> dict[str, Any]:
 
     try:
         cache_info = scan_cache_dir(cache_dir=models_dir)
-    except Exception:
+    except (OSError, ValueError):
         return {"models": [], "total_size_bytes": 0}
 
     models: list[dict[str, Any]] = []
