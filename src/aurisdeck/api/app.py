@@ -535,7 +535,8 @@ def _build_core_router() -> APIRouter:
                     paths.models,
                     hf_token=hf_token,
                     hf_endpoint=settings.hf_endpoint,
-                )
+                ),
+                abandon_on_cancel=True,
             )
         except ValueError as exc:
             raise ApiError(
@@ -636,6 +637,7 @@ def create_app(
         try:
             yield
         finally:
+            app.state.event_bus.close()
             app.state.coordinator.stop()
 
     app = FastAPI(

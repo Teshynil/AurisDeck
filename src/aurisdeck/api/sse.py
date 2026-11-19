@@ -42,7 +42,7 @@ class SSEBroker:
         """Yield formatted SSE events and periodic keepalive comments until disconnect."""
         queue = self._event_bus.subscribe()
         try:
-            while True:
+            while not self._event_bus.is_closed:
                 if request is not None and await request.is_disconnected():
                     break
                 try:
@@ -51,10 +51,15 @@ class SSEBroker:
                         timeout=self._heartbeat_seconds,
                     )
                 except TimeoutError:
-                    if request is not None and await request.is_disconnected():
+                    if self._event_bus.is_closed or (
+                        request is not None and await request.is_disconnected()
+                    ):
                         break
                     yield ": keepalive\n\n"
                     continue
+
+                if envelope is None:
+                    break
 
                 seq = next(self._seq_counter)
                 event_type = str(envelope.get("type") or "message")

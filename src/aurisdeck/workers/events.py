@@ -11,7 +11,9 @@ from typing import Any
 from aurisdeck.backends.base import ASRContext, ASRResult, SpeakerTurn
 
 
-def _deliver_nowait(queue: asyncio.Queue[dict[str, Any]], event: dict[str, Any]) -> None:
+def _deliver_nowait(
+    queue: asyncio.Queue[dict[str, Any] | None], event: dict[str, Any] | None
+) -> None:
     """Enqueue an event without blocking, dropping the oldest item if full."""
     if queue.full():
         try:
@@ -29,22 +31,47 @@ class EventBus:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._closed = False
         self._subscribers: dict[
-            asyncio.Queue[dict[str, Any]], asyncio.AbstractEventLoop | None
+            asyncio.Queue[dict[str, Any] | None], asyncio.AbstractEventLoop | None
         ] = {}
 
-    def subscribe(self, maxsize: int = 256) -> asyncio.Queue[dict[str, Any]]:
+    @property
+    def is_closed(self) -> bool:
+        """Return True once the bus has been closed for shutdown."""
+        with self._lock:
+            return self._closed
+
+    def close(self) -> None:
+        """Mark the bus closed and wake all subscriber queues with None."""
+        with self._lock:
+            self._closed = True
+            subscribers = list(self._subscribers.items())
+        for queue, sub_loop in subscribers:
+            target_loop = sub_loop or getattr(queue, "_loop", None)
+            if target_loop is not None and not target_loop.is_closed():
+                try:
+                    target_loop.call_soon_threadsafe(_deliver_nowait, queue, None)
+                except RuntimeError:
+                    pass
+            else:
+                _deliver_nowait(queue, None)
+
+    def subscribe(self, maxsize: int = 256) -> asyncio.Queue[dict[str, Any] | None]:
         """Register a new subscriber queue bound to the current running loop if any."""
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=maxsize)
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=maxsize)
         try:
             loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
         with self._lock:
             self._subscribers[queue] = loop
+            closed = self._closed
+        if closed:
+            _deliver_nowait(queue, None)
         return queue
 
-    def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+    def unsubscribe(self, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
         """Remove a subscriber queue from the bus."""
         with self._lock:
             self._subscribers.pop(queue, None)

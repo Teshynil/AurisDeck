@@ -960,6 +960,7 @@ def serve(host: str, port: int, data_dir: Path, log_level: str | None) -> None:
         port=port,
         root_path=settings.base_path,
         log_level=settings.log_level.lower(),
+        timeout_graceful_shutdown=5,
     )
 
 
