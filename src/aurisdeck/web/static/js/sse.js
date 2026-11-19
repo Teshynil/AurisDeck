@@ -86,6 +86,48 @@ function emitWindowEvent(name, detail) {
   }
 }
 
+function hydrateJobsFromSnapshot(rawJobs, rawDevices) {
+  const devicesByJobTrack = new Map();
+  for (const dev of rawDevices) {
+    if (dev && dev.active_job_id && dev.track_id) {
+      devicesByJobTrack.set(`${dev.active_job_id}:${dev.track_id}`, dev);
+    }
+  }
+  return rawJobs.map((job) => {
+    const tracks = Array.isArray(job?.tracks) ? job.tracks : [];
+    if (!tracks.length) {
+      return job;
+    }
+    const trackProgress = { ...(job.track_progress || {}) };
+    let hasTrackData = false;
+    for (const t of tracks) {
+      const dev = devicesByJobTrack.get(`${job.id}:${t.id}`);
+      if (t.status === "completed" || t.asr_status === "completed") {
+        trackProgress[t.id] = {
+          ...(trackProgress[t.id] || {}),
+          track_id: t.id,
+          stage: "completed",
+          percent: 100,
+        };
+        hasTrackData = true;
+      } else if (dev || (t.status && t.status !== "queued")) {
+        trackProgress[t.id] = {
+          ...(trackProgress[t.id] || {}),
+          track_id: t.id,
+          device_id: dev?.id ?? t.device_id ?? null,
+          stage: dev?.stage ?? t.status ?? "transcribing",
+          processed_ms: dev?.processed_ms ?? t.processed_ms ?? 0,
+          total_ms: dev?.total_ms ?? t.total_ms ?? 0,
+          rtfx: dev?.rtfx ?? t.rtfx ?? null,
+          percent: typeof dev?.percent === "number" ? dev.percent : Number(t.percent || 0),
+        };
+        hasTrackData = true;
+      }
+    }
+    return hasTrackData ? { ...job, track_progress: trackProgress } : job;
+  });
+}
+
 async function resyncState() {
   const { authStatus } = store.getState();
   if (authStatus && authStatus.auth_mode === "password" && !authStatus.authenticated) {
@@ -97,9 +139,11 @@ async function resyncState() {
   resyncInFlight = true;
   try {
     const [jobsRes, devicesRes] = await Promise.all([listJobs(), getDevices()]);
+    const rawJobs = Array.isArray(jobsRes?.jobs) ? jobsRes.jobs : [];
+    const rawDevices = Array.isArray(devicesRes?.devices) ? devicesRes.devices : [];
     store.setState({
-      jobs: Array.isArray(jobsRes?.jobs) ? jobsRes.jobs : [],
-      devices: Array.isArray(devicesRes?.devices) ? devicesRes.devices : [],
+      jobs: hydrateJobsFromSnapshot(rawJobs, rawDevices),
+      devices: rawDevices,
     });
   } catch (err) {
     console.warn("SSE resync failed:", err);

@@ -1862,24 +1862,43 @@ function buildQueueGroups(jobs, nowMs) {
           const tp = trackProgressMap[track.id] || null;
           const trackDone =
             track.status === "completed" ||
+            track.asr_status === "completed" ||
             tp?.stage === "completed" ||
             job.status === "completed" ||
             job.status === "completed_partial";
+          const snapActive =
+            !trackDone &&
+            (Boolean(track.device_id) ||
+              (track.status && track.status !== "queued") ||
+              Number(track.percent || 0) > 0);
           const isRunning =
             !trackDone &&
-            tp &&
-            (tp.stage === "transcribing" || tp.device_id || Number(tp.percent || 0) > 0);
-          const pct = trackDone ? 100 : isRunning ? Number(tp.percent || 0) : 0;
-          const statusCode = trackDone ? "completed" : isRunning ? tp.stage || "transcribing" : "queued";
+            (Boolean(
+              tp && (tp.stage === "transcribing" || tp.device_id || Number(tp.percent || 0) > 0)
+            ) ||
+              snapActive);
+          const pct = trackDone
+            ? 100
+            : isRunning
+              ? Number(tp?.percent ?? track.percent ?? 0)
+              : 0;
+          const statusCode = trackDone
+            ? "completed"
+            : isRunning
+              ? tp?.stage || track.status || "transcribing"
+              : "queued";
+          const rtfxVal = isRunning ? (tp?.rtfx ?? track.rtfx ?? null) : null;
+          const procMs = tp?.processed_ms ?? track.processed_ms ?? 0;
+          const totMs = tp?.total_ms ?? track.total_ms ?? 0;
           childTracks.push({
             key: `t:${track.id}`,
             indexLabel: `${idx + 1}/${tracks.length}`,
             name: track.display_name || track.original_filename || track.id,
-            deviceId: isRunning || trackDone ? tp?.device_id || null : null,
+            deviceId: isRunning || trackDone ? tp?.device_id ?? track.device_id ?? null : null,
             statusCode,
             percent: Math.max(0, Math.min(100, pct)),
-            rtfx: isRunning ? tp?.rtfx ?? null : null,
-            eta: isRunning ? computeEta(tp?.processed_ms || 0, tp?.total_ms || 0, tp?.rtfx ?? null) : null,
+            rtfx: rtfxVal,
+            eta: isRunning ? computeEta(procMs, totMs, rtfxVal) : null,
             isTerminal: trackDone,
             isSuccess: trackDone,
             isFailed: false,
