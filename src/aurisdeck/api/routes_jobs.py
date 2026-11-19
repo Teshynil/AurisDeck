@@ -1203,7 +1203,11 @@ async def list_jobs(
         limit=limit,
         offset=offset,
     )
-    active_track_states = coordinator.get_active_track_states()
+    active_track_states = (
+        coordinator.get_active_track_states()
+        if hasattr(coordinator, "get_active_track_states")
+        else {}
+    )
     return {
         "jobs": [
             _serialize_job(job, paths=paths, active_track_states=active_track_states)
@@ -1231,7 +1235,11 @@ async def get_job_detail(
     job = _get_job_or_404(job_repo, job_id)
     segments = segment_repo.list_segments(job_id)
     available_formats = _scan_available_formats(paths, job_id)
-    active_track_states = coordinator.get_active_track_states()
+    active_track_states = (
+        coordinator.get_active_track_states()
+        if hasattr(coordinator, "get_active_track_states")
+        else {}
+    )
     payload = _serialize_job(job, paths=paths, active_track_states=active_track_states)
     payload["segments"] = [_serialize_segment(seg) for seg in segments]
     payload["available_formats"] = available_formats

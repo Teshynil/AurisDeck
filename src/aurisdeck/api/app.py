@@ -485,7 +485,10 @@ def _build_core_router() -> APIRouter:
         _admin: Annotated[dict[str, Any], Depends(require_admin)],
         coordinator: Annotated[Coordinator, Depends(get_coordinator)],
     ) -> dict[str, list[dict[str, Any]]]:
-        devices = coordinator.get_device_snapshots()
+        if hasattr(coordinator, "get_device_snapshots"):
+            devices = coordinator.get_device_snapshots()
+        else:
+            devices = [asdict(device) for device in coordinator.list_devices()]
         return {"devices": devices}
 
     @router.post("/system/unload-models")
