@@ -231,6 +231,19 @@
       "logout_button": "Cerrar sesión",
       "auth_mode_none": "Autenticación desactivada",
       "auth_mode_password": "Protegido con contraseña"
+    },
+    "models": {
+      "title": "Modelos descargados",
+      "total_size": "Espacio total en caché: {size}",
+      "refresh": "Refrescar",
+      "placeholder": "large-v3-turbo, medium, small o repo_id...",
+      "pull_btn": "Descargar / Actualizar",
+      "update_btn": "Actualizar",
+      "empty": "No hay modelos descargados en data/models/.",
+      "files_count": "{count} archivos",
+      "pull_success": "{model} actualizado/descargado correctamente.",
+      "delete_confirm": "¿Eliminar el modelo descargado \"{repo_id}\" para liberar espacio?",
+      "delete_success": "Modelo eliminado ({size} liberados)."
     }
   },
   "hf_token": {

@@ -231,6 +231,19 @@
       "logout_button": "Sign out",
       "auth_mode_none": "Authentication disabled",
       "auth_mode_password": "Protected by password"
+    },
+    "models": {
+      "title": "Downloaded models",
+      "total_size": "Total cache size: {size}",
+      "refresh": "Refresh",
+      "placeholder": "large-v3-turbo, medium, small or repo_id...",
+      "pull_btn": "Download / Update",
+      "update_btn": "Update",
+      "empty": "No downloaded models found in data/models/.",
+      "files_count": "{count} files",
+      "pull_success": "{model} downloaded/updated successfully.",
+      "delete_confirm": "Delete cached model \"{repo_id}\" to free disk space?",
+      "delete_success": "Model deleted ({size} freed)."
     }
   },
   "hf_token": {

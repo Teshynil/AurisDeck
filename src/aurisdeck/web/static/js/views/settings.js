@@ -689,7 +689,7 @@ export function mount(container) {
       local.pullInput = "";
       store.addToast({
         type: "success",
-        message: `${target} actualizado/descargado correctamente.`,
+        message: t("settings.models.pull_success", { model: target }),
       });
     } catch (err) {
       local.modelsError = translateError(err);
@@ -704,7 +704,7 @@ export function mount(container) {
     if (!repoId || local.deletingRepoId) return;
     if (
       typeof window !== "undefined" &&
-      !window.confirm(`¿Eliminar el modelo descargado "${repoId}" para liberar espacio?`)
+      !window.confirm(t("settings.models.delete_confirm", { repo_id: repoId }))
     ) {
       return;
     }
@@ -717,7 +717,7 @@ export function mount(container) {
       local.modelsTotalBytes = Number(res?.total_size_bytes || 0);
       store.addToast({
         type: "info",
-        message: `Modelo eliminado (${formatBytes(res?.freed_bytes || 0)} liberados).`,
+        message: t("settings.models.delete_success", { size: formatBytes(res?.freed_bytes || 0) }),
       });
     } catch (err) {
       local.modelsError = translateError(err);
@@ -744,7 +744,7 @@ export function mount(container) {
               className: "help-text",
               textContent: local.loadingModels
                 ? t("common.loading")
-                : "No hay modelos descargados en data/models/.",
+                : t("settings.models.empty"),
             }),
           ]
         : local.models.map((item) => {
@@ -779,7 +779,7 @@ export function mount(container) {
                 ),
                 el("span", {
                   className: "help-text mono text-truncate",
-                  textContent: `${item.repo_id} · ${item.nb_files} archivos${item.last_modified ? ` · ${item.last_modified}` : ""}`,
+                  textContent: `${item.repo_id} · ${t("settings.models.files_count", { count: item.nb_files })}${item.last_modified ? ` · ${item.last_modified}` : ""}`,
                 })
               ),
               el(
@@ -792,7 +792,7 @@ export function mount(container) {
                   textContent:
                     local.pullingModel === updateTarget || local.pullingModel === item.repo_id
                       ? t("common.loading")
-                      : "Actualizar",
+                      : t("settings.models.update_btn"),
                   onClick: () => void handlePullModel(updateTarget),
                 }),
                 el("button", {
@@ -816,17 +816,17 @@ export function mount(container) {
         el(
           "div",
           null,
-          el("h3", { className: "card-title", textContent: "Modelos descargados" }),
+          el("h3", { className: "card-title", textContent: t("settings.models.title") }),
           el("p", {
             className: "card-subtitle",
-            textContent: `Espacio total en caché: ${formatBytes(local.modelsTotalBytes)}`,
+            textContent: t("settings.models.total_size", { size: formatBytes(local.modelsTotalBytes) }),
           })
         ),
         el("button", {
           type: "button",
           className: "btn btn-secondary btn-sm",
           disabled: local.loadingModels,
-          textContent: local.loadingModels ? t("common.loading") : "Refrescar",
+          textContent: local.loadingModels ? t("common.loading") : t("settings.models.refresh"),
           onClick: () => void loadSystemModels(),
         })
       ),
@@ -851,7 +851,7 @@ export function mount(container) {
             className: "input",
             type: "text",
             list: "settings-models-presets",
-            placeholder: "large-v3-turbo, medium, small, o repo_id...",
+            placeholder: t("settings.models.placeholder"),
             value: local.pullInput,
             style: "flex: 1;",
             onInput: (ev) => {
@@ -863,7 +863,7 @@ export function mount(container) {
             type: "submit",
             className: "btn btn-primary btn-sm",
             disabled: Boolean(local.pullingModel),
-            textContent: local.pullingModel ? t("common.loading") : "Descargar / Actualizar",
+            textContent: local.pullingModel ? t("common.loading") : t("settings.models.pull_btn"),
           })
         ),
         el("div", { className: "stack", style: "gap: 0.5rem;" }, ...modelRows)
