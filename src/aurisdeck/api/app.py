@@ -290,7 +290,10 @@ def _build_core_router() -> APIRouter:
                 detail="Initial setup has already been completed",
             )
         settings = get_settings(request)
-        result = verify_hf_token(body.token, hf_endpoint=settings.hf_endpoint)
+        result = await anyio.to_thread.run_sync(
+            lambda: verify_hf_token(body.token, hf_endpoint=settings.hf_endpoint),
+            abandon_on_cancel=True,
+        )
         return {
             "valid": result.valid,
             "status": result.status,
@@ -480,7 +483,10 @@ def _build_core_router() -> APIRouter:
         settings = get_settings(request)
         system_settings_repo = get_system_settings_repo(request)
         token_to_check = body.token if body.token is not None else system_settings_repo.get_hf_token()
-        result = verify_hf_token(token_to_check, hf_endpoint=settings.hf_endpoint)
+        result = await anyio.to_thread.run_sync(
+            lambda: verify_hf_token(token_to_check, hf_endpoint=settings.hf_endpoint),
+            abandon_on_cancel=True,
+        )
         return {
             "valid": result.valid,
             "status": result.status,

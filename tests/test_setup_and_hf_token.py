@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aurisdeck.api.app import create_app
-from aurisdeck.backends.hf_verify import verify_hf_token
+from aurisdeck.backends.hf_verify import (
+    HfVerifyResult,
+    configure_hf_http_client,
+    verify_hf_token,
+)
 from aurisdeck.config import Settings
 from aurisdeck.workers.devices import DeviceInfo
 
@@ -194,3 +199,53 @@ def test_cli_reset_password_defaults_to_primary_admin_and_list_users(tmp_path: P
             json={"username": "myadmin", "password": "newpassword123"},
         )
         assert login_res.status_code == 200
+
+
+def test_configure_hf_http_client_sets_finite_timeouts_and_is_idempotent() -> None:
+    from huggingface_hub.utils._http import get_session
+
+    assert configure_hf_http_client(force=True) is True
+    session = get_session()
+    assert session.follow_redirects is True
+    assert session.timeout.connect == 5.0
+    assert session.timeout.read == 30.0
+    assert session.timeout.write == 30.0
+    assert session.timeout.pool == 10.0
+
+    assert configure_hf_http_client() is False
+    assert get_session() is session
+
+
+def test_verify_hf_token_endpoints_run_off_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str | None, bool]] = []
+
+    def _fake_verify(token: str | None, *, hf_endpoint: str | None = None) -> HfVerifyResult:
+        try:
+            asyncio.get_running_loop()
+            ran_off_loop = False
+        except RuntimeError:
+            ran_off_loop = True
+        calls.append((token, ran_off_loop))
+        return HfVerifyResult(valid=True, status="ok", username="tester")
+
+    monkeypatch.setattr("aurisdeck.api.app.verify_hf_token", _fake_verify)
+
+    app = _build_test_app(tmp_path)
+    with TestClient(app) as client:
+        setup_res = client.post("/api/v1/setup/verify-hf-token", json={"token": "hf_test_1"})
+        assert setup_res.status_code == 200
+        assert setup_res.json()["valid"] is True
+        assert setup_res.json()["status"] == "ok"
+
+        admin_res = client.post(
+            "/api/v1/admin/settings/verify-hf-token",
+            json={"token": "hf_test_2"},
+        )
+        assert admin_res.status_code == 200
+        assert admin_res.json()["valid"] is True
+        assert admin_res.json()["status"] == "ok"
+
+    assert calls == [("hf_test_1", True), ("hf_test_2", True)]
