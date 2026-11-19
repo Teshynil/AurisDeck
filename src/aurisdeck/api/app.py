@@ -23,6 +23,7 @@ from aurisdeck.api.deps import (
     get_auth_service,
     get_coordinator,
     get_current_user,
+    get_event_bus,
     get_locale_loader,
     get_paths,
     get_settings,
@@ -530,27 +531,55 @@ def _build_core_router() -> APIRouter:
         paths: Annotated[DataPaths, Depends(get_paths)],
         settings: Annotated[Settings, Depends(get_settings)],
         system_settings_repo: Annotated[SystemSettingsRepo, Depends(get_system_settings_repo)],
+        event_bus: Annotated[EventBus, Depends(get_event_bus)],
     ) -> dict[str, Any]:
         from aurisdeck.storage.models_cache import pull_or_update_model
 
         hf_token = system_settings_repo.get_hf_token()
+        model_label = body.model.strip()
+
+        def emit_progress(payload: dict[str, Any]) -> None:
+            event_bus.publish("model.pull.progress", payload=payload)
+
+        emit_progress(
+            {
+                "model": model_label,
+                "status": "checking",
+                "percent": 0,
+                "downloaded_bytes": 0,
+                "total_bytes": 0,
+            }
+        )
         try:
-            return await anyio.to_thread.run_sync(
+            result = await anyio.to_thread.run_sync(
                 lambda: pull_or_update_model(
                     body.model,
                     paths.models,
                     hf_token=hf_token,
                     hf_endpoint=settings.hf_endpoint,
+                    progress_cb=emit_progress,
                 ),
                 abandon_on_cancel=True,
             )
+            emit_progress(
+                {
+                    "model": model_label,
+                    "status": "completed",
+                    "percent": 100,
+                    "downloaded_bytes": 0,
+                    "total_bytes": 0,
+                }
+            )
+            return result
         except ValueError as exc:
+            emit_progress({"model": model_label, "status": "failed", "percent": 0})
             raise ApiError(
                 status_code=400,
                 error_code="VALIDATION_ERROR",
                 detail=str(exc),
             ) from exc
         except Exception as exc:
+            emit_progress({"model": model_label, "status": "failed", "percent": 0})
             raise ApiError(
                 status_code=502,
                 error_code="MODEL_LOAD_FAILED",

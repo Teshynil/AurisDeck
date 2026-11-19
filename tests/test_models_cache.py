@@ -11,7 +11,11 @@ from fastapi.testclient import TestClient
 
 from aurisdeck.api.app import create_app
 from aurisdeck.config import Settings
-from aurisdeck.storage.models_cache import delete_cached_model, list_cached_models
+from aurisdeck.storage.models_cache import (
+    delete_cached_model,
+    list_cached_models,
+    pull_or_update_model,
+)
 
 
 def _create_fake_hf_repo(models_dir: Path, repo_id: str, size_bytes: int = 1024) -> Path:
@@ -124,3 +128,90 @@ def test_system_models_endpoints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         assert del_resp.status_code == 200
         assert del_resp.json()["deleted"] is True
         assert coord.unloaded is True
+
+
+def test_pull_or_update_model_validation_and_progress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    models_dir = tmp_path / "models"
+
+    with pytest.raises(ValueError, match="Invalid Whisper model size"):
+        pull_or_update_model("nonexistent-model-alias", models_dir)
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_snapshot_download(repo_id: str, **kwargs: Any) -> str:
+        calls.append({"repo_id": repo_id, **kwargs})
+        tqdm_cls = kwargs.get("tqdm_class")
+        if tqdm_cls is not None:
+            # Transfer bar must NOT double-count total_bytes
+            t_bar = tqdm_cls(
+                total=1000,
+                unit="B",
+                desc="Downloading bytes",
+                name="huggingface_hub.snapshot_download.transfer",
+                disable=True,
+            )
+            r_bar = tqdm_cls(
+                total=1000,
+                unit="B",
+                desc="Reconstructing",
+                name="huggingface_hub.snapshot_download",
+                disable=True,
+            )
+            r_bar.update(500)
+            r_bar.update(500)
+            r_bar.close()
+            t_bar.close()
+        return str(models_dir / "done")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+
+    events: list[dict[str, Any]] = []
+    pull_or_update_model("small", models_dir, progress_cb=events.append)
+    assert calls[0]["repo_id"] == "Systran/faster-whisper-small"
+    assert "allow_patterns" in calls[0]
+    assert events[-1]["percent"] == 100
+    assert events[-1]["total_bytes"] == 1000
+    assert events[-1]["downloaded_bytes"] == 1000
+
+    pull_or_update_model("pyannote/speaker-diarization-3.1", models_dir)
+    assert calls[1]["repo_id"] == "pyannote/speaker-diarization-3.1"
+    assert "allow_patterns" not in calls[1]
+
+
+def test_pull_endpoint_emits_sse_progress_events(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    coord = _StubCoordinator(busy=False)
+    settings = Settings(data_dir=tmp_path, auth_mode="none")
+    app = create_app(settings, coordinator=coord)  # type: ignore[arg-type]
+
+    def fake_pull(model: str, mdir: Path, **kw: Any) -> dict[str, Any]:
+        cb = kw.get("progress_cb")
+        if cb is not None:
+            cb(
+                {
+                    "model": model,
+                    "status": "downloading",
+                    "percent": 50,
+                    "downloaded_bytes": 500,
+                    "total_bytes": 1000,
+                }
+            )
+        return {"model": model, "path": str(mdir), "models": [], "total_size_bytes": 0}
+
+    monkeypatch.setattr("aurisdeck.storage.models_cache.pull_or_update_model", fake_pull)
+
+    with TestClient(app) as client:
+        sub_q = app.state.event_bus.subscribe()
+        resp = client.post("/api/v1/system/models/pull", json={"model": "tiny"})
+        assert resp.status_code == 200
+
+        published = []
+        while not sub_q.empty():
+            published.append(sub_q.get_nowait())
+        app.state.event_bus.unsubscribe(sub_q)
+
+        statuses = [ev["payload"]["status"] for ev in published if ev and ev["type"] == "model.pull.progress"]
+        assert statuses == ["checking", "downloading", "completed"]

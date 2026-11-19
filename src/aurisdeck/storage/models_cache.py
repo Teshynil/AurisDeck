@@ -4,9 +4,20 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+_WHISPER_ALLOW_PATTERNS = [
+    "config.json",
+    "preprocessor_config.json",
+    "model.bin",
+    "tokenizer.json",
+    "vocabulary.*",
+]
 
 
 def _classify_repo(repo_id: str) -> tuple[str, str]:
@@ -67,12 +78,78 @@ def list_cached_models(models_dir: Path) -> dict[str, Any]:
     }
 
 
+def _make_snapshot_tqdm_class(
+    model_label: str,
+    progress_cb: Callable[[dict[str, Any]], None],
+) -> type[Any]:
+    """Create a huggingface_hub tqdm subclass that reports reconstruct_progress bytes."""
+    from huggingface_hub.utils import tqdm as hf_tqdm
+
+    lock = threading.Lock()
+    state: dict[str, Any] = {
+        "last_emit": 0.0,
+        "last_pct": -1,
+    }
+
+    class _SnapshotProgressTqdm(hf_tqdm):  # type: ignore[misc]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            unit = kwargs.get("unit")
+            desc = str(kwargs.get("desc") or "")
+            name = kwargs.get("name")
+            self._track_bytes = unit == "B" and (
+                name == "huggingface_hub.snapshot_download" or desc.startswith("Reconstructing")
+            )
+            self._tracked_total = int(kwargs.get("total") or 0)
+            self._tracked_n = int(kwargs.get("initial") or 0)
+            super().__init__(*args, **kwargs)
+            if self._track_bytes:
+                self._emit(force=True)
+
+        def _emit(self, *, force: bool = False) -> None:
+            total = max(self._tracked_total, int(getattr(self, "total", 0) or 0))
+            downloaded = max(self._tracked_n, int(getattr(self, "n", 0) or 0))
+            if total <= 0:
+                return
+            pct = min(100, max(0, round((downloaded / total) * 100)))
+            now = time.monotonic()
+            with lock:
+                if not force and pct == state["last_pct"] and (now - state["last_emit"]) < 0.25:
+                    return
+                state["last_pct"] = pct
+                state["last_emit"] = now
+            progress_cb(
+                {
+                    "model": model_label,
+                    "status": "downloading",
+                    "percent": pct,
+                    "downloaded_bytes": downloaded,
+                    "total_bytes": total,
+                }
+            )
+
+        def update(self, n: float | None = 1) -> bool | None:
+            if self._track_bytes and n:
+                self._tracked_n += int(n)
+            res = super().update(n)
+            if self._track_bytes:
+                self._emit()
+            return res
+
+        def close(self) -> None:
+            if self._track_bytes:
+                self._emit(force=True)
+            super().close()
+
+    return _SnapshotProgressTqdm
+
+
 def pull_or_update_model(
     model: str,
     models_dir: Path,
     *,
     hf_token: str | None = None,
     hf_endpoint: str | None = None,
+    progress_cb: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Download or update a Whisper alias or Hugging Face repo_id into *models_dir*."""
     target = model.strip()
@@ -88,25 +165,30 @@ def pull_or_update_model(
 
     configure_hf_http_client()
 
+    from huggingface_hub import snapshot_download
+
+    kwargs: dict[str, Any] = {
+        "cache_dir": str(models_dir),
+        "token": hf_token or None,
+        "local_files_only": False,
+    }
+
     if "/" in target:
-        from huggingface_hub import snapshot_download
-
-        downloaded_path = snapshot_download(
-            repo_id=target,
-            cache_dir=str(models_dir),
-            token=hf_token or None,
-            local_files_only=False,
-        )
+        repo_id = target
     else:
-        from faster_whisper.utils import download_model
+        from faster_whisper.utils import _MODELS
 
-        kwargs: dict[str, Any] = {
-            "cache_dir": str(models_dir),
-            "local_files_only": False,
-        }
-        if hf_token:
-            kwargs["use_auth_token"] = hf_token
-        downloaded_path = download_model(target, **kwargs)
+        if target not in _MODELS:
+            raise ValueError(
+                f"Invalid Whisper model size '{target}', expected one of: {', '.join(_MODELS)}"
+            )
+        repo_id = _MODELS[target]
+        kwargs["allow_patterns"] = _WHISPER_ALLOW_PATTERNS
+
+    if progress_cb is not None:
+        kwargs["tqdm_class"] = _make_snapshot_tqdm_class(target, progress_cb)
+
+    downloaded_path = snapshot_download(repo_id=repo_id, **kwargs)
 
     inventory = list_cached_models(models_dir)
     return {
