@@ -146,7 +146,7 @@ def test_pull_or_update_model_validation_and_progress(
         if tqdm_cls is not None:
             # Transfer bar must NOT double-count total_bytes
             t_bar = tqdm_cls(
-                total=1000,
+                total=0,
                 unit="B",
                 desc="Downloading bytes",
                 name="huggingface_hub.snapshot_download.transfer",
@@ -159,6 +159,9 @@ def test_pull_or_update_model_validation_and_progress(
                 name="huggingface_hub.snapshot_download",
                 disable=True,
             )
+            # Transfer progress advances continuously before reconstruct catches up
+            t_bar.update(250)
+            t_bar.update(250)
             r_bar.update(500)
             r_bar.update(500)
             r_bar.close()
@@ -171,7 +174,8 @@ def test_pull_or_update_model_validation_and_progress(
     pull_or_update_model("small", models_dir, progress_cb=events.append)
     assert calls[0]["repo_id"] == "Systran/faster-whisper-small"
     assert "allow_patterns" in calls[0]
-    assert events[-1]["percent"] == 100
+    assert any(ev["percent"] == 25 and ev["downloaded_bytes"] == 250 for ev in events)
+    assert events[-1]["percent"] == 99
     assert events[-1]["total_bytes"] == 1000
     assert events[-1]["downloaded_bytes"] == 1000
 

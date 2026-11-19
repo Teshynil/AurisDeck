@@ -82,11 +82,14 @@ def _make_snapshot_tqdm_class(
     model_label: str,
     progress_cb: Callable[[dict[str, Any]], None],
 ) -> type[Any]:
-    """Create a huggingface_hub tqdm subclass that reports reconstruct_progress bytes."""
+    """Create a huggingface_hub tqdm subclass combining transfer + reconstruct progress."""
     from huggingface_hub.utils import tqdm as hf_tqdm
 
     lock = threading.Lock()
     state: dict[str, Any] = {
+        "total_bytes": 0,
+        "reconstruct_n": 0,
+        "transfer_n": 0,
         "last_emit": 0.0,
         "last_pct": -1,
     }
@@ -96,24 +99,36 @@ def _make_snapshot_tqdm_class(
             unit = kwargs.get("unit")
             desc = str(kwargs.get("desc") or "")
             name = kwargs.get("name")
-            self._track_bytes = unit == "B" and (
+            self._is_reconstruct = unit == "B" and (
                 name == "huggingface_hub.snapshot_download" or desc.startswith("Reconstructing")
             )
-            self._tracked_total = int(kwargs.get("total") or 0)
-            self._tracked_n = int(kwargs.get("initial") or 0)
+            self._is_transfer = unit == "B" and (
+                name == "huggingface_hub.snapshot_download.transfer"
+                or desc.startswith("Downloading bytes")
+            )
+            init_total = int(kwargs.get("total") or 0)
+            init_n = int(kwargs.get("initial") or 0)
             super().__init__(*args, **kwargs)
-            if self._track_bytes:
-                self._emit(force=True)
+            if self._is_reconstruct or self._is_transfer:
+                with lock:
+                    if self._is_reconstruct:
+                        state["total_bytes"] = max(state["total_bytes"], init_total)
+                        state["reconstruct_n"] += init_n
+                    elif self._is_transfer:
+                        state["transfer_n"] += init_n
+                self._maybe_emit(force=True)
 
-        def _emit(self, *, force: bool = False) -> None:
-            total = max(self._tracked_total, int(getattr(self, "total", 0) or 0))
-            downloaded = max(self._tracked_n, int(getattr(self, "n", 0) or 0))
-            if total <= 0:
-                return
-            pct = min(100, max(0, round((downloaded / total) * 100)))
-            now = time.monotonic()
+        def _maybe_emit(self, *, force: bool = False) -> None:
             with lock:
-                if not force and pct == state["last_pct"] and (now - state["last_emit"]) < 0.25:
+                total = state["total_bytes"]
+                if total <= 0:
+                    return
+                downloaded = min(total, max(state["transfer_n"], state["reconstruct_n"]))
+                pct = min(99, max(0, round((downloaded / total) * 100)))
+                now = time.monotonic()
+                if not force and pct == state["last_pct"] and (now - state["last_emit"]) < 0.20:
+                    return
+                if not force and pct == state["last_pct"] and downloaded == 0:
                     return
                 state["last_pct"] = pct
                 state["last_emit"] = now
@@ -127,17 +142,33 @@ def _make_snapshot_tqdm_class(
                 }
             )
 
+        def refresh(self, *args: Any, **kwargs: Any) -> Any:
+            res = super().refresh(*args, **kwargs)
+            if self._is_reconstruct:
+                cur_total = int(getattr(self, "total", 0) or 0)
+                if cur_total > 0:
+                    with lock:
+                        state["total_bytes"] = max(state["total_bytes"], cur_total)
+                    self._maybe_emit()
+            return res
+
         def update(self, n: float | None = 1) -> bool | None:
-            if self._track_bytes and n:
-                self._tracked_n += int(n)
             res = super().update(n)
-            if self._track_bytes:
-                self._emit()
+            if (self._is_reconstruct or self._is_transfer) and n:
+                delta = int(n)
+                with lock:
+                    if self._is_reconstruct:
+                        cur_total = int(getattr(self, "total", 0) or 0)
+                        state["total_bytes"] = max(state["total_bytes"], cur_total)
+                        state["reconstruct_n"] += delta
+                    else:
+                        state["transfer_n"] += delta
+                self._maybe_emit()
             return res
 
         def close(self) -> None:
-            if self._track_bytes:
-                self._emit(force=True)
+            if self._is_reconstruct or self._is_transfer:
+                self._maybe_emit(force=True)
             super().close()
 
     return _SnapshotProgressTqdm
