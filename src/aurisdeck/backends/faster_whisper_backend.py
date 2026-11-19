@@ -173,6 +173,7 @@ class FasterWhisperBackend:
         context: ASRContext,
         cancel_check: Callable[[], bool] | None = None,
         progress_cb: Callable[[int, int, float], None] | None = None,
+        status_cb: Callable[[str], None] | None = None,
     ) -> ASRResult:
         """Transcribe an audio file using the currently loaded Whisper model."""
         if self._model is None:
@@ -197,11 +198,18 @@ class FasterWhisperBackend:
             if cancel_check is not None and cancel_check():
                 raise JobCancelledError()
 
+            if status_cb is not None:
+                status_cb("loading_audio")
             audio_input = _load_audio_input(audio_path)
+
+            if status_cb is not None:
+                status_cb("analyzing_speech")
             segments_gen, info = self._model.transcribe(audio_input, **kwargs)
             total_ms = _to_ms(float(getattr(info, "duration", 0.0) or 0.0))
             t0 = time.monotonic()
 
+            if status_cb is not None:
+                status_cb("transcribing")
             for seg in segments_gen:
                 seg_start_ms = _to_ms(seg.start)
                 seg_end_ms = _to_ms(seg.end)

@@ -85,6 +85,7 @@ class ASRBackend(Protocol):
         context: ASRContext,
         cancel_check: Callable[[], bool] | None = None,
         progress_cb: Callable[[int, int, float], None] | None = None,
+        status_cb: Callable[[str], None] | None = None,
     ) -> ASRResult:
         """Transcribe an audio file using the provided ASRContext."""
         ...

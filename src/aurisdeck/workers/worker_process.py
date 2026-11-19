@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import queue
@@ -206,14 +207,29 @@ def run_worker_loop(
                         ),
                     )
                     asr_loaded = True
-                    event_q.put(WorkerStageEvent(device_id, task.job_id, task.track_id, "transcribing"))
+                    transcribe_kwargs: dict[str, Any] = {
+                        "cancel_check": lambda jid=task.job_id: _is_cancelled(cancel_flag_dict, jid),
+                        "progress_cb": lambda p, t, r, jid=task.job_id, tid=task.track_id: event_q.put(
+                            WorkerProgressEvent(device_id, jid, tid, p, t, r)
+                        ),
+                    }
+                    sig = inspect.signature(asr_backend.transcribe)
+                    if "status_cb" in sig.parameters or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    ):
+                        transcribe_kwargs["status_cb"] = (
+                            lambda st, jid=task.job_id, tid=task.track_id: event_q.put(
+                                WorkerStageEvent(device_id, jid, tid, st)
+                            )
+                        )
+                    else:
+                        event_q.put(
+                            WorkerStageEvent(device_id, task.job_id, task.track_id, "transcribing")
+                        )
                     result = asr_backend.transcribe(
                         Path(task.audio_path),
                         task.context,
-                        cancel_check=lambda jid=task.job_id: _is_cancelled(cancel_flag_dict, jid),
-                        progress_cb=lambda p, t, r, jid=task.job_id, tid=task.track_id: event_q.put(
-                            WorkerProgressEvent(device_id, jid, tid, p, t, r)
-                        ),
+                        **transcribe_kwargs,
                     )
                     logger.info(
                         "Completed ASR task job=%s track=%s segments=%d duration_ms=%d",

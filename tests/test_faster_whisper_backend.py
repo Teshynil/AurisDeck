@@ -354,3 +354,34 @@ def test_unload_clears_model_and_cuda_cache(
     # Also verify unload succeeds gracefully if torch is missing.
     monkeypatch.setitem(sys.modules, "torch", None)  # type: ignore[arg-type]
     backend.unload()
+
+
+def test_transcribe_emits_intermediate_stage_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """transcribe() emits loading_audio, analyzing_speech, and transcribing in order."""
+    wav_path = tmp_path / "sample.wav"
+    wav_path.write_bytes(b"RIFF")
+    monkeypatch.setattr(
+        "aurisdeck.backends.faster_whisper_backend._load_audio_input",
+        lambda _path: [0.0] * 160,
+    )
+
+    class FakeModel:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def transcribe(self, audio: Any, **kwargs: Any) -> tuple[Any, Any]:
+            seg = SimpleNamespace(start=0.0, end=0.5, text="hola", words=[])
+            return iter([seg]), SimpleNamespace(duration=1.0, language="es")
+
+    _install_fake_faster_whisper(monkeypatch, FakeModel)
+
+    backend = FasterWhisperBackend()
+    backend.ensure_loaded("tiny", "cpu", "int8", tmp_path)
+
+    stages: list[str] = []
+    res = backend.transcribe(wav_path, ASRContext(), status_cb=stages.append)
+    assert len(res.segments) == 1
+    assert stages == ["loading_audio", "analyzing_speech", "transcribing"]
