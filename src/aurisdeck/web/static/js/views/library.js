@@ -243,6 +243,7 @@ function mergeServerJobs(serverJobs) {
         return {
           ...job,
           ...(prev.progress ? { progress: prev.progress } : {}),
+          ...(prev.track_progress ? { track_progress: prev.track_progress } : {}),
           ...(prev.stage ? { stage: prev.stage } : {}),
         };
       }

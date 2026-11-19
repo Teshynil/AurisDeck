@@ -251,7 +251,10 @@ async function analyzeSelectedFiles() {
     for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
       const file = files[fileIdx];
       if (String(file.name || "").toLowerCase().endsWith(".zip")) {
-        const { entries } = await inspectLocalZipFile(file);
+        const cached = zipEntriesCache.get(file);
+        const { entries } = cached
+          ? { entries: cached }
+          : await inspectLocalZipFile(file);
         if (formState.inspectKey !== key) {
           return;
         }
@@ -373,18 +376,67 @@ function extractDroppedFiles(dataTransfer) {
   return { candidateFiles, rejectedFolders };
 }
 
-function handleSelectedFiles(fileList, rejectedFolders = []) {
+let selectionGeneration = 0;
+const zipEntriesCache = new WeakMap();
+
+async function handleSelectedFiles(fileList, rejectedFolders = []) {
+  const gen = ++selectionGeneration;
   const candidates = Array.from(fileList || []);
   const validFiles = [];
   const rejectedFiles = [];
 
+  const hasZipCandidate = candidates.some(
+    (file) => getFileExtension(file?.name) === ".zip"
+  );
+  if (hasZipCandidate && ZIP_SUPPORTED) {
+    formState.inspectStatus = "loading";
+    formState.inspectError = "";
+    formState.selectionWarning = "";
+    renderComposer();
+  }
+
   for (const file of candidates) {
     const ext = getFileExtension(file?.name);
-    if (ACCEPTED_EXTENSION_SET.has(ext)) {
-      validFiles.push(file);
-    } else {
+    if (!ACCEPTED_EXTENSION_SET.has(ext)) {
       rejectedFiles.push(file?.name || "?");
+      continue;
     }
+
+    if (ext === ".zip") {
+      if (!ZIP_SUPPORTED) {
+        rejectedFiles.push(file?.name || "?");
+        continue;
+      }
+      try {
+        let entries = zipEntriesCache.get(file);
+        if (!entries) {
+          const result = await inspectLocalZipFile(file);
+          if (gen !== selectionGeneration) {
+            return;
+          }
+          entries = Array.isArray(result?.entries) ? result.entries : [];
+          if (entries.length > 0) {
+            zipEntriesCache.set(file, entries);
+          }
+        }
+        if (entries.length === 0) {
+          rejectedFiles.push(file?.name || "?");
+          continue;
+        }
+      } catch {
+        if (gen !== selectionGeneration) {
+          return;
+        }
+        rejectedFiles.push(file?.name || "?");
+        continue;
+      }
+    }
+
+    validFiles.push(file);
+  }
+
+  if (gen !== selectionGeneration) {
+    return;
   }
 
   const rejectionMessage = buildRejectionMessage(rejectedFolders, rejectedFiles);
@@ -409,7 +461,7 @@ function handleSelectedFiles(fileList, rejectedFolders = []) {
   formState.inspectKey = "";
   formState.inspectStatus = "idle";
   formState.inspectError = "";
-  void analyzeSelectedFiles().then(() => renderComposer());
+  await analyzeSelectedFiles();
 }
 
 function addHotwordsFromRaw(rawText) {
@@ -1443,9 +1495,21 @@ function formatCountdownMMSS(ms) {
 }
 
 function patchStageBadge(badgeEl, stageCode) {
-  const code = stageCode || "queued";
-  const nextClass = `badge ${STAGE_BADGE_CLASS[code] || "badge-info"}`;
-  const nextText = i18n.t(`stages.${code}`);
+  const normalized = String(stageCode || "queued");
+  let variant = "badge-info";
+  if (normalized === "completed") {
+    variant = "badge-success";
+  } else if (normalized === "completed_partial" || normalized === "cancelling") {
+    variant = "badge-warning";
+  } else if (normalized === "failed") {
+    variant = "badge-danger";
+  } else if (normalized === "cancelled" || normalized === "queued") {
+    variant = "";
+  }
+  const nextClass = variant ? `badge ${variant}` : "badge";
+  const key = `stages.${normalized}`;
+  const translated = i18n.t(key);
+  const nextText = translated === key ? normalized : translated;
   if (badgeEl.className !== nextClass) {
     badgeEl.className = nextClass;
   }
