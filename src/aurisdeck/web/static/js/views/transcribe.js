@@ -1710,7 +1710,7 @@ function patchDeviceCardRefs(refs, device, jobsById) {
   const trackInfo = resolveDeviceTrackInfo(device, activeJob);
   if (trackInfo) {
     refs.trackRow.hidden = false;
-    const pillText = `Track ${trackInfo.indexLabel}`;
+    const pillText = i18n.t("simple.track_index", { index: trackInfo.indexLabel });
     if (refs.trackPill.textContent !== pillText) {
       refs.trackPill.textContent = pillText;
     }
@@ -1949,7 +1949,7 @@ function buildQueueGroups(jobs, nowMs) {
 
     const groupTitle =
       g.kind === "batch" && g.jobs.length > 1
-        ? `${primaryJob.title || "Batch"} (${g.jobs.length} files)`
+        ? i18n.t("simple.batch_files", { title: primaryJob.title || "Batch", count: g.jobs.length })
         : primaryJob.title || primaryJob.id;
 
     visible.push({
@@ -2132,7 +2132,7 @@ function createQueueGroupRefs(groupKey) {
   const dismissBtn = document.createElement("button");
   dismissBtn.type = "button";
   dismissBtn.className = "btn btn-sm";
-  dismissBtn.textContent = "Dismiss";
+  dismissBtn.textContent = i18n.t("simple.dismiss");
 
   headerActions.appendChild(toggleBtn);
   headerActions.appendChild(cancelBtn);
@@ -2249,7 +2249,9 @@ function patchQueueGroupRefs(refs, group, nowMs) {
   const isCollapsed = collapsedGroupKeys.has(group.key);
   refs.toggleBtn.hidden = !hasMultiTracks;
   if (hasMultiTracks) {
-    const toggleLabel = isCollapsed ? `▸ ${group.childTracks.length}` : "▾ Tracks";
+    const toggleLabel = isCollapsed
+      ? `▸ ${group.childTracks.length}`
+      : i18n.t("simple.tracks_hide");
     if (refs.toggleBtn.textContent !== toggleLabel) {
       refs.toggleBtn.textContent = toggleLabel;
     }
@@ -2264,6 +2266,10 @@ function patchQueueGroupRefs(refs, group, nowMs) {
     (group.primaryJob.status === "completed" || group.primaryJob.status === "completed_partial");
   refs.openBtn.hidden = !canOpen;
   refs.dismissBtn.hidden = !group.allTerminal;
+  const dismissLabel = i18n.t("simple.dismiss");
+  if (refs.dismissBtn.textContent !== dismissLabel) {
+    refs.dismissBtn.textContent = dismissLabel;
+  }
 
   const isSuccessGroup =
     group.allTerminal &&
@@ -2291,9 +2297,11 @@ function patchQueueGroupRefs(refs, group, nowMs) {
 
   const summaryParts = [`${group.globalPct}%`];
   if (hasMultiTracks) {
-    summaryParts.push(`${doneCount}/${group.childTracks.length} completed`);
-    if (runCount > 0) summaryParts.push(`${runCount} running`);
-    if (queuedCount > 0) summaryParts.push(`${queuedCount} queued`);
+    summaryParts.push(
+      i18n.t("simple.summary_completed", { done: doneCount, total: group.childTracks.length })
+    );
+    if (runCount > 0) summaryParts.push(i18n.t("simple.summary_running", { count: runCount }));
+    if (queuedCount > 0) summaryParts.push(i18n.t("simple.summary_queued", { count: queuedCount }));
   }
   const summaryStr = summaryParts.join(" · ");
   if (refs.summaryEl.textContent !== summaryStr) {

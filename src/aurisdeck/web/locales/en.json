@@ -99,7 +99,14 @@
     "submitting": "Submitting...",
     "queue_title": "Active queue and devices",
     "queue_empty": "No jobs are currently running.",
-    "open_viewer": "Open viewer"
+    "open_viewer": "Open viewer",
+    "track_index": "Track {index}",
+    "dismiss": "Dismiss",
+    "tracks_hide": "▾ Tracks",
+    "batch_files": "{title} ({count} files)",
+    "summary_completed": "{done}/{total} completed",
+    "summary_running": "{count} running",
+    "summary_queued": "{count} queued"
   },
   "advanced": {
     "title": "Profiles & dictionaries",

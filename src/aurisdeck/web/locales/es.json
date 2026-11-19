@@ -99,7 +99,14 @@
     "submitting": "Enviando...",
     "queue_title": "Cola y dispositivos activos",
     "queue_empty": "No hay trabajos en ejecución en este momento.",
-    "open_viewer": "Abrir visor"
+    "open_viewer": "Abrir visor",
+    "track_index": "Pista {index}",
+    "dismiss": "Ocultar",
+    "tracks_hide": "▾ Pistas",
+    "batch_files": "{title} ({count} archivos)",
+    "summary_completed": "{done}/{total} completadas",
+    "summary_running": "{count} procesando",
+    "summary_queued": "{count} en cola"
   },
   "advanced": {
     "title": "Perfiles y diccionarios",
