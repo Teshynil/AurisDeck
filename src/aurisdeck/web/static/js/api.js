@@ -270,6 +270,13 @@ export const adminVerifyHfToken = (token = null) =>
   });
 export const unloadModels = () =>
   request("/api/v1/system/unload-models", { method: "POST" });
+export const getSystemModels = () => request("/api/v1/system/models");
+export const pullSystemModel = (model) =>
+  request("/api/v1/system/models/pull", { method: "POST", body: { model } });
+export const deleteSystemModel = (repoId) =>
+  request(`/api/v1/system/models?repo_id=${encodeURIComponent(repoId)}`, {
+    method: "DELETE",
+  });
 
 export const listJobs = (params = {}) =>
   request(`/api/v1/jobs${buildQuery(params)}`);
@@ -351,6 +358,9 @@ export const api = {
   patchAdminSettings,
   adminVerifyHfToken,
   unloadModels,
+  getSystemModels,
+  pullSystemModel,
+  deleteSystemModel,
   listJobs,
   getJob,
   createJob,

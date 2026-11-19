@@ -109,7 +109,29 @@ export function mount(container) {
     savingSystem: false,
     unloadingModels: false,
     systemError: "",
+
+    models: [],
+    modelsTotalBytes: 0,
+    modelsLoaded: false,
+    loadingModels: false,
+    pullingModel: "",
+    deletingRepoId: "",
+    pullInput: "",
+    modelsError: "",
   };
+
+  function formatBytes(bytes) {
+    const val = Number(bytes || 0);
+    if (val <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let idx = 0;
+    let num = val;
+    while (num >= 1024 && idx < units.length - 1) {
+      num /= 1024;
+      idx += 1;
+    }
+    return `${num >= 10 || idx === 0 ? num.toFixed(0) : num.toFixed(2)} ${units[idx]}`;
+  }
 
   let devicesListEl = null;
 
@@ -138,13 +160,19 @@ export function mount(container) {
       return;
     }
     local.loadingSystem = true;
+    local.loadingModels = true;
     local.systemError = "";
+    local.modelsError = "";
     try {
-      const [settingsPayload, devicesPayload] = await Promise.all([
+      const [settingsPayload, devicesPayload, modelsPayload] = await Promise.all([
         api.getAdminSettings(),
         Array.isArray(state.devices) && state.devices.length > 0
           ? Promise.resolve(null)
           : api.getDevices(),
+        api.getSystemModels().catch((err) => {
+          local.modelsError = translateError(err);
+          return null;
+        }),
       ]);
       if (settingsPayload && typeof settingsPayload === "object") {
         local.system = {
@@ -160,10 +188,16 @@ export function mount(container) {
       if (devicesPayload && Array.isArray(devicesPayload.devices)) {
         store.setState({ devices: devicesPayload.devices });
       }
+      if (modelsPayload && Array.isArray(modelsPayload.models)) {
+        local.models = modelsPayload.models;
+        local.modelsTotalBytes = Number(modelsPayload.total_size_bytes || 0);
+        local.modelsLoaded = true;
+      }
     } catch (err) {
       local.systemError = translateError(err);
     } finally {
       local.loadingSystem = false;
+      local.loadingModels = false;
       render();
     }
   }
@@ -624,6 +658,219 @@ export function mount(container) {
     );
   }
 
+  async function loadSystemModels() {
+    if (local.loadingModels) return;
+    local.loadingModels = true;
+    local.modelsError = "";
+    render();
+    try {
+      const payload = await api.getSystemModels();
+      local.models = Array.isArray(payload?.models) ? payload.models : [];
+      local.modelsTotalBytes = Number(payload?.total_size_bytes || 0);
+      local.modelsLoaded = true;
+    } catch (err) {
+      local.modelsError = translateError(err);
+    } finally {
+      local.loadingModels = false;
+      render();
+    }
+  }
+
+  async function handlePullModel(modelName) {
+    const target = String(modelName || "").trim();
+    if (!target || local.pullingModel) return;
+    local.pullingModel = target;
+    local.modelsError = "";
+    render();
+    try {
+      const res = await api.pullSystemModel(target);
+      local.models = Array.isArray(res?.models) ? res.models : local.models;
+      local.modelsTotalBytes = Number(res?.total_size_bytes ?? local.modelsTotalBytes);
+      local.pullInput = "";
+      store.addToast({
+        type: "success",
+        message: `${target} actualizado/descargado correctamente.`,
+      });
+    } catch (err) {
+      local.modelsError = translateError(err);
+      store.addToast({ type: "danger", message: local.modelsError });
+    } finally {
+      local.pullingModel = "";
+      render();
+    }
+  }
+
+  async function handleDeleteModel(repoId) {
+    if (!repoId || local.deletingRepoId) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`¿Eliminar el modelo descargado "${repoId}" para liberar espacio?`)
+    ) {
+      return;
+    }
+    local.deletingRepoId = repoId;
+    local.modelsError = "";
+    render();
+    try {
+      const res = await api.deleteSystemModel(repoId);
+      local.models = Array.isArray(res?.models) ? res.models : [];
+      local.modelsTotalBytes = Number(res?.total_size_bytes || 0);
+      store.addToast({
+        type: "info",
+        message: `Modelo eliminado (${formatBytes(res?.freed_bytes || 0)} liberados).`,
+      });
+    } catch (err) {
+      local.modelsError = translateError(err);
+      store.addToast({ type: "danger", message: local.modelsError });
+    } finally {
+      local.deletingRepoId = "";
+      render();
+    }
+  }
+
+  function renderModelsCard() {
+    const datalist = el(
+      "datalist",
+      { id: "settings-models-presets" },
+      ["large-v3-turbo", "large-v3", "medium", "small", "base", "tiny", "pyannote/speaker-diarization-3.1"].map(
+        (m) => el("option", { value: m })
+      )
+    );
+
+    const modelRows =
+      local.models.length === 0
+        ? [
+            el("p", {
+              className: "help-text",
+              textContent: local.loadingModels
+                ? t("common.loading")
+                : "No hay modelos descargados en data/models/.",
+            }),
+          ]
+        : local.models.map((item) => {
+            const isBusy =
+              local.pullingModel === item.repo_id ||
+              local.pullingModel === item.display_name ||
+              local.deletingRepoId === item.repo_id;
+            const catClass =
+              item.category === "asr"
+                ? "badge badge-info"
+                : item.category === "diarization"
+                  ? "badge badge-gpu"
+                  : "badge";
+            const updateTarget =
+              item.category === "asr" && item.display_name ? item.display_name : item.repo_id;
+
+            return el(
+              "div",
+              { className: "file-item" },
+              el(
+                "div",
+                { className: "stack", style: "gap: 0.2rem; min-width: 0;" },
+                el(
+                  "div",
+                  { className: "row", style: "gap: 0.45rem; flex-wrap: wrap;" },
+                  el("strong", { className: "mono", textContent: item.display_name || item.repo_id }),
+                  el("span", { className: catClass, textContent: (item.category || "other").toUpperCase() }),
+                  el("span", {
+                    className: "badge mono",
+                    textContent: formatBytes(item.size_on_disk_bytes),
+                  })
+                ),
+                el("span", {
+                  className: "help-text mono text-truncate",
+                  textContent: `${item.repo_id} · ${item.nb_files} archivos${item.last_modified ? ` · ${item.last_modified}` : ""}`,
+                })
+              ),
+              el(
+                "div",
+                { className: "row", style: "gap: 0.4rem; flex-shrink: 0;" },
+                el("button", {
+                  type: "button",
+                  className: "btn btn-secondary btn-sm",
+                  disabled: Boolean(local.pullingModel || local.deletingRepoId),
+                  textContent:
+                    local.pullingModel === updateTarget || local.pullingModel === item.repo_id
+                      ? t("common.loading")
+                      : "Actualizar",
+                  onClick: () => void handlePullModel(updateTarget),
+                }),
+                el("button", {
+                  type: "button",
+                  className: "btn btn-danger btn-sm",
+                  disabled: Boolean(isBusy || local.pullingModel || local.deletingRepoId),
+                  textContent:
+                    local.deletingRepoId === item.repo_id ? t("common.loading") : t("common.delete"),
+                  onClick: () => void handleDeleteModel(item.repo_id),
+                })
+              )
+            );
+          });
+
+    return el(
+      "div",
+      { className: "card", id: "settings-models-card" },
+      el(
+        "div",
+        { className: "card-header" },
+        el(
+          "div",
+          null,
+          el("h3", { className: "card-title", textContent: "Modelos descargados" }),
+          el("p", {
+            className: "card-subtitle",
+            textContent: `Espacio total en caché: ${formatBytes(local.modelsTotalBytes)}`,
+          })
+        ),
+        el("button", {
+          type: "button",
+          className: "btn btn-secondary btn-sm",
+          disabled: local.loadingModels,
+          textContent: local.loadingModels ? t("common.loading") : "Refrescar",
+          onClick: () => void loadSystemModels(),
+        })
+      ),
+      el(
+        "div",
+        { className: "card-body stack" },
+        local.modelsError
+          ? el("div", { className: "form-error", role: "alert", textContent: local.modelsError })
+          : null,
+        el(
+          "form",
+          {
+            className: "row",
+            style: "gap: 0.5rem; align-items: stretch;",
+            onSubmit: (ev) => {
+              ev.preventDefault();
+              void handlePullModel(local.pullInput);
+            },
+          },
+          el("input", {
+            id: "settings-model-pull-input",
+            className: "input",
+            type: "text",
+            list: "settings-models-presets",
+            placeholder: "large-v3-turbo, medium, small, o repo_id...",
+            value: local.pullInput,
+            style: "flex: 1;",
+            onInput: (ev) => {
+              local.pullInput = ev.target.value;
+            },
+          }),
+          datalist,
+          el("button", {
+            type: "submit",
+            className: "btn btn-primary btn-sm",
+            disabled: Boolean(local.pullingModel),
+            textContent: local.pullingModel ? t("common.loading") : "Descargar / Actualizar",
+          })
+        ),
+        el("div", { className: "stack", style: "gap: 0.5rem;" }, ...modelRows)
+      )
+    );
+  }
+
   function render() {
     devicesListEl = null;
     const state = store.getState();
@@ -637,7 +884,7 @@ export function mount(container) {
 
     const nodes = [header, renderAccountCard(state)];
     if (isAdmin) {
-      nodes.push(renderSystemCard());
+      nodes.push(renderSystemCard(), renderModelsCard());
     }
 
     container.replaceChildren(...nodes);
