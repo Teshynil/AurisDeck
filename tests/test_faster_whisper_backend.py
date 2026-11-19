@@ -89,6 +89,7 @@ def test_ensure_loaded_sets_env_reuses_and_unloads_on_change(
         "compute_type": "float16",
         "cpu_threads": 4,
         "download_root": str(models_dir),
+        "local_files_only": True,
     }
     assert os.environ["HF_HOME"] == str(models_dir)
     assert os.environ["HF_ENDPOINT"] == "https://hf-mirror.example"

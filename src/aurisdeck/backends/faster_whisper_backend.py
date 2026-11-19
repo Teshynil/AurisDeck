@@ -31,6 +31,26 @@ def _is_oom_error(exc: BaseException) -> bool:
     return "out of memory" in str(exc).lower()
 
 
+def _is_missing_local_model_error(exc: BaseException) -> bool:
+    """Return True when loading with local_files_only failed due to missing cache."""
+    if isinstance(exc, FileNotFoundError):
+        return True
+    name = type(exc).__name__.lower()
+    if "localentrynotfound" in name or "entrynotfound" in name:
+        return True
+    msg = str(exc).lower()
+    return any(
+        needle in msg
+        for needle in (
+            "local_files_only",
+            "cannot find the requested files",
+            "not found in the local cache",
+            "no such file or directory",
+            "does not appear to have a file named",
+        )
+    )
+
+
 def _to_ms(seconds: float) -> int:
     """Convert a timestamp in seconds to rounded integer milliseconds."""
     return round(float(seconds) * 1000)
@@ -112,13 +132,30 @@ class FasterWhisperBackend:
                 _preload_cuda_libs()
             from faster_whisper import WhisperModel
 
-            self._model = WhisperModel(
-                model_name,
-                device=device,
-                compute_type=compute_type,
-                cpu_threads=cpu_threads,
-                download_root=str(models_dir),
-            )
+            try:
+                self._model = WhisperModel(
+                    model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=cpu_threads,
+                    download_root=str(models_dir),
+                    local_files_only=True,
+                )
+            except Exception as local_exc:
+                if _is_oom_error(local_exc):
+                    raise
+                if not _is_missing_local_model_error(local_exc):
+                    raise
+                if status_cb is not None:
+                    status_cb("downloading_model")
+                self._model = WhisperModel(
+                    model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=cpu_threads,
+                    download_root=str(models_dir),
+                    local_files_only=False,
+                )
             self._loaded_key = target_key
         except Exception as exc:
             self._model = None
