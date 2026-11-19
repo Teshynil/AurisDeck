@@ -250,7 +250,10 @@
       "files_count": "{count} archivos",
       "pull_success": "{model} actualizado/descargado correctamente.",
       "delete_confirm": "¿Eliminar el modelo descargado \"{repo_id}\" para liberar espacio?",
-      "delete_success": "Modelo eliminado ({size} liberados)."
+      "delete_success": "Modelo eliminado ({size} liberados).",
+      "checking": "Verificando {model}...",
+      "downloading": "Descargando {model}...",
+      "checking_snapshot": "Comprobando archivos..."
     }
   },
   "hf_token": {

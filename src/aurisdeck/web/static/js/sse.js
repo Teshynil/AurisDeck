@@ -486,6 +486,17 @@ export function connectSSE() {
     if (env) handleWorkerUnloaded(env);
   });
 
+  es.addEventListener("model.pull.progress", (ev) => {
+    const env = parseEnvelope(ev);
+    const payload = env?.payload;
+    if (!payload) return;
+    if (payload.status === "completed" || payload.status === "failed") {
+      store.setState({ modelPull: null });
+    } else {
+      store.setState({ modelPull: payload });
+    }
+  });
+
   return es;
 }
 

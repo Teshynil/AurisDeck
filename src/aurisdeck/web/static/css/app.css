@@ -1224,6 +1224,64 @@ body {
   height: 0.38rem;
 }
 
+.pull-progress-box {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.pull-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.82rem;
+}
+
+.pull-status-text {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pull-pct-text {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--info);
+  flex-shrink: 0;
+}
+
+.pull-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.progress-fill.is-indeterminate {
+  width: 38% !important;
+  transition: none;
+  animation: progress-indeterminate 1.25s infinite ease-in-out;
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
+}
+
 @media (max-width: 960px) {
   .devices-grid.has-many {
     grid-template-columns: repeat(2, minmax(0, 1fr));

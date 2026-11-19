@@ -134,6 +134,49 @@ export function mount(container) {
   }
 
   let devicesListEl = null;
+  let pullProgressRefs = null;
+
+  function patchPullProgress(modelPull) {
+    if (!pullProgressRefs) {
+      return;
+    }
+    const active = modelPull && (modelPull.status === "checking" || modelPull.status === "downloading")
+      ? modelPull
+      : local.pullingModel
+        ? { model: local.pullingModel, status: "checking", percent: 0, downloaded_bytes: 0, total_bytes: 0 }
+        : null;
+
+    if (!active) {
+      pullProgressRefs.box.hidden = true;
+      pullProgressRefs.fill.className = "progress-fill";
+      pullProgressRefs.fill.style.width = "0%";
+      return;
+    }
+
+    pullProgressRefs.box.hidden = false;
+    const modelLabel = active.model || local.pullingModel || "";
+    const total = Number(active.total_bytes || 0);
+    const downloaded = Number(active.downloaded_bytes || 0);
+    const pct = Math.max(0, Math.min(100, Number(active.percent || 0)));
+
+    if (pullProgressRefs.modelText.textContent !== modelLabel) {
+      pullProgressRefs.modelText.textContent = modelLabel;
+    }
+
+    if (active.status === "downloading" && total > 0) {
+      pullProgressRefs.fill.className = "progress-fill is-active";
+      pullProgressRefs.fill.style.width = `${pct}%`;
+      pullProgressRefs.pctText.textContent = `${pct}%`;
+      pullProgressRefs.statusText.textContent = t("settings.models.downloading", { model: modelLabel });
+      pullProgressRefs.bytesText.textContent = `${formatBytes(downloaded)} / ${formatBytes(total)}`;
+    } else {
+      pullProgressRefs.fill.className = "progress-fill is-indeterminate";
+      pullProgressRefs.fill.style.width = "";
+      pullProgressRefs.pctText.textContent = "";
+      pullProgressRefs.statusText.textContent = t("settings.models.checking", { model: modelLabel });
+      pullProgressRefs.bytesText.textContent = t("settings.models.checking_snapshot");
+    }
+  }
 
   function isAuthenticated(state) {
     return !(state.authStatus?.auth_mode === "password" && !state.authStatus?.authenticated);
@@ -696,6 +739,9 @@ export function mount(container) {
       store.addToast({ type: "danger", message: local.modelsError });
     } finally {
       local.pullingModel = "";
+      if (store.getState().modelPull?.model === target) {
+        store.setState({ modelPull: null });
+      }
       render();
     }
   }
@@ -866,6 +912,23 @@ export function mount(container) {
             textContent: local.pullingModel ? t("common.loading") : t("settings.models.pull_btn"),
           })
         ),
+        (() => {
+          const statusText = el("span", { className: "pull-status-text" });
+          const pctText = el("span", { className: "pull-pct-text" });
+          const fill = el("div", { className: "progress-fill" });
+          const modelText = el("span");
+          const bytesText = el("span");
+          const box = el(
+            "div",
+            { id: "settings-model-pull-progress", className: "pull-progress-box", hidden: true },
+            el("div", { className: "pull-progress-head" }, statusText, pctText),
+            el("div", { className: "progress-bar" }, fill),
+            el("div", { className: "pull-meta" }, modelText, bytesText)
+          );
+          pullProgressRefs = { box, statusText, pctText, fill, modelText, bytesText };
+          patchPullProgress(store.getState().modelPull);
+          return box;
+        })(),
         el("div", { className: "stack", style: "gap: 0.5rem;" }, ...modelRows)
       )
     );
@@ -873,6 +936,7 @@ export function mount(container) {
 
   function render() {
     devicesListEl = null;
+    pullProgressRefs = null;
     const state = store.getState();
     const isAdmin = state.user?.role === "admin";
 
@@ -891,6 +955,10 @@ export function mount(container) {
   }
 
   const unsubscribe = store.subscribe((state, prevState) => {
+    if (state.modelPull !== prevState.modelPull) {
+      patchPullProgress(state.modelPull);
+    }
+
     if (state.user?.role === "admin" && !local.systemLoaded && isAuthenticated(state)) {
       if (state.activeTab === "settings" || prevState.user !== state.user || prevState.authStatus !== state.authStatus) {
         void ensureAdminSettingsLoaded();

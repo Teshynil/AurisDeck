@@ -250,7 +250,10 @@
       "files_count": "{count} files",
       "pull_success": "{model} downloaded/updated successfully.",
       "delete_confirm": "Delete cached model \"{repo_id}\" to free disk space?",
-      "delete_success": "Model deleted ({size} freed)."
+      "delete_success": "Model deleted ({size} freed).",
+      "checking": "Checking {model}...",
+      "downloading": "Downloading {model}...",
+      "checking_snapshot": "Checking files..."
     }
   },
   "hf_token": {

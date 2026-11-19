@@ -13,6 +13,7 @@ const DEFAULT_INITIAL_STATE = {
   replacements: [],
   devices: [],
   jobs: [],
+  modelPull: null,
   activeTab: "transcribe",
   selectedJobId: null,
   toasts: [],
