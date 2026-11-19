@@ -164,17 +164,48 @@ export function mount(container) {
     }
 
     if (active.status === "downloading" && total > 0) {
-      pullProgressRefs.fill.className = "progress-fill is-active";
-      pullProgressRefs.fill.style.width = `${pct}%`;
-      pullProgressRefs.pctText.textContent = `${pct}%`;
-      pullProgressRefs.statusText.textContent = t("settings.models.downloading", { model: modelLabel });
-      pullProgressRefs.bytesText.textContent = `${formatBytes(downloaded)} / ${formatBytes(total)}`;
+      const wasIndeterminate = pullProgressRefs.fill.classList.contains("is-indeterminate");
+      if (pullProgressRefs.fill.className !== "progress-fill is-active") {
+        pullProgressRefs.fill.className = "progress-fill is-active";
+      }
+      if (wasIndeterminate) {
+        pullProgressRefs.fill.style.width = "0%";
+        requestAnimationFrame(() => {
+          if (pullProgressRefs) {
+            pullProgressRefs.fill.style.width = `${pct}%`;
+          }
+        });
+      } else {
+        pullProgressRefs.fill.style.width = `${pct}%`;
+      }
+      const nextPct = `${pct}%`;
+      if (pullProgressRefs.pctText.textContent !== nextPct) {
+        pullProgressRefs.pctText.textContent = nextPct;
+      }
+      const nextStatus = t("settings.models.downloading", { model: modelLabel });
+      if (pullProgressRefs.statusText.textContent !== nextStatus) {
+        pullProgressRefs.statusText.textContent = nextStatus;
+      }
+      const nextBytes = `${formatBytes(downloaded)} / ${formatBytes(total)}`;
+      if (pullProgressRefs.bytesText.textContent !== nextBytes) {
+        pullProgressRefs.bytesText.textContent = nextBytes;
+      }
     } else {
-      pullProgressRefs.fill.className = "progress-fill is-indeterminate";
+      if (pullProgressRefs.fill.className !== "progress-fill is-indeterminate") {
+        pullProgressRefs.fill.className = "progress-fill is-indeterminate";
+      }
       pullProgressRefs.fill.style.width = "";
-      pullProgressRefs.pctText.textContent = "";
-      pullProgressRefs.statusText.textContent = t("settings.models.checking", { model: modelLabel });
-      pullProgressRefs.bytesText.textContent = t("settings.models.checking_snapshot");
+      if (pullProgressRefs.pctText.textContent !== "") {
+        pullProgressRefs.pctText.textContent = "";
+      }
+      const nextStatus = t("settings.models.checking", { model: modelLabel });
+      if (pullProgressRefs.statusText.textContent !== nextStatus) {
+        pullProgressRefs.statusText.textContent = nextStatus;
+      }
+      const nextBytes = t("settings.models.checking_snapshot");
+      if (pullProgressRefs.bytesText.textContent !== nextBytes) {
+        pullProgressRefs.bytesText.textContent = nextBytes;
+      }
     }
   }
 

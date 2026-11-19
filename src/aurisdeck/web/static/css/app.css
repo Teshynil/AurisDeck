@@ -1234,6 +1234,10 @@ body {
   gap: 0.45rem;
 }
 
+.pull-progress-box .progress-fill {
+  transition: width 300ms linear;
+}
+
 .pull-progress-head {
   display: flex;
   justify-content: space-between;
