@@ -312,6 +312,8 @@
     "preprocessing": "Preparando audio",
     "downloading_model": "Descargando modelo",
     "loading_model": "Cargando modelo",
+    "loading_audio": "Cargando audio",
+    "analyzing_speech": "Analizando voz (VAD)",
     "transcribing": "Transcribiendo",
     "diarizing": "Diarizando hablantes",
     "merging": "Fusionando transcripción",

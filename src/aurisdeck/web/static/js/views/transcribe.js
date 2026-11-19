@@ -23,11 +23,20 @@ const ACTIVE_STATUSES = new Set([
   "preprocessing",
   "downloading_model",
   "loading_model",
+  "loading_audio",
+  "analyzing_speech",
   "transcribing",
   "diarizing",
   "merging",
   "exporting",
   "cancelling",
+]);
+
+const INDETERMINATE_STAGES = new Set([
+  "downloading_model",
+  "loading_model",
+  "loading_audio",
+  "analyzing_speech",
 ]);
 
 const TERMINAL_STATUSES = new Set([
@@ -1741,8 +1750,27 @@ function patchDeviceCardRefs(refs, device, jobsById) {
             : 0;
   const clampedPct = Math.max(0, Math.min(100, percent));
 
-  refs.fill.style.width = `${clampedPct}%`;
-  refs.fill.className = "progress-fill is-active";
+  const isIndeterminate =
+    clampedPct === 0 && (INDETERMINATE_STAGES.has(stageCode) || stageCode === "transcribing");
+  if (isIndeterminate) {
+    if (refs.fill.className !== "progress-fill is-indeterminate") {
+      refs.fill.className = "progress-fill is-indeterminate";
+    }
+    refs.fill.style.width = "";
+  } else {
+    const wasIndeterminate = refs.fill.classList.contains("is-indeterminate");
+    if (refs.fill.className !== "progress-fill is-active") {
+      refs.fill.className = "progress-fill is-active";
+    }
+    if (wasIndeterminate) {
+      refs.fill.style.width = "0%";
+      requestAnimationFrame(() => {
+        refs.fill.style.width = `${clampedPct}%`;
+      });
+    } else {
+      refs.fill.style.width = `${clampedPct}%`;
+    }
+  }
 
   const pctStr = `${clampedPct}%`;
   if (refs.pctEl.textContent !== pctStr) {
@@ -1874,7 +1902,11 @@ function buildQueueGroups(jobs, nowMs) {
           const isRunning =
             !trackDone &&
             (Boolean(
-              tp && (tp.stage === "transcribing" || tp.device_id || Number(tp.percent || 0) > 0)
+              tp &&
+                (tp.stage === "transcribing" ||
+                  INDETERMINATE_STAGES.has(tp.stage) ||
+                  tp.device_id ||
+                  Number(tp.percent || 0) > 0)
             ) ||
               snapActive);
           const pct = trackDone
@@ -2047,17 +2079,25 @@ function patchTrackRowRefs(refs, track) {
     refs.deviceBadge.textContent = devText;
   }
 
+  const isIndeterminate =
+    track.percent === 0 &&
+    !track.isSuccess &&
+    !track.isFailed &&
+    (INDETERMINATE_STAGES.has(track.statusCode) || track.statusCode === "transcribing");
+
   const fillClass = track.isSuccess
     ? "progress-fill is-success"
     : track.isFailed
       ? "progress-fill is-danger"
       : track.statusCode === "queued"
         ? "progress-fill is-queued"
-        : "progress-fill is-active";
+        : isIndeterminate
+          ? "progress-fill is-indeterminate"
+          : "progress-fill is-active";
   if (refs.fill.className !== fillClass) {
     refs.fill.className = fillClass;
   }
-  refs.fill.style.width = `${track.percent}%`;
+  refs.fill.style.width = isIndeterminate ? "" : `${track.percent}%`;
 
   const pctStr = `${track.percent}%`;
   if (refs.pctEl.textContent !== pctStr) {
@@ -2277,7 +2317,9 @@ function patchQueueGroupRefs(refs, group, nowMs) {
   const isFailedGroup =
     group.allTerminal &&
     group.jobs.some((j) => j.status === "failed" || j.status === "cancelled");
-  const hasRunning = group.childTracks.some((t) => t.statusCode === "transcribing");
+  const hasRunning = group.childTracks.some(
+    (t) => t.statusCode === "transcribing" || INDETERMINATE_STAGES.has(t.statusCode)
+  );
 
   const fillClass = isSuccessGroup
     ? "progress-fill is-success"
@@ -2292,7 +2334,9 @@ function patchQueueGroupRefs(refs, group, nowMs) {
   refs.fill.style.width = `${group.globalPct}%`;
 
   const doneCount = group.childTracks.filter((t) => t.isSuccess).length;
-  const runCount = group.childTracks.filter((t) => t.statusCode === "transcribing").length;
+  const runCount = group.childTracks.filter(
+    (t) => t.statusCode === "transcribing" || INDETERMINATE_STAGES.has(t.statusCode)
+  ).length;
   const queuedCount = group.childTracks.filter((t) => t.statusCode === "queued").length;
 
   const summaryParts = [`${group.globalPct}%`];

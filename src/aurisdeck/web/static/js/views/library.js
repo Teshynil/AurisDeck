@@ -12,6 +12,8 @@ const ACTIVE_STATUSES = new Set([
   "preprocessing",
   "downloading_model",
   "loading_model",
+  "loading_audio",
+  "analyzing_speech",
   "transcribing",
   "diarizing",
   "merging",
