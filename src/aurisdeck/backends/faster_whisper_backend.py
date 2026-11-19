@@ -148,6 +148,9 @@ class FasterWhisperBackend:
                     raise
                 if status_cb is not None:
                     status_cb("downloading_model")
+                from aurisdeck.backends.hf_verify import configure_hf_http_client
+
+                configure_hf_http_client()
                 self._model = WhisperModel(
                     model_name,
                     device=device,

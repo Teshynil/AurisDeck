@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,6 +10,53 @@ DIARIZATION_REQUIRED_REPOS: tuple[str, ...] = (
     "pyannote/speaker-diarization-3.1",
     "pyannote/segmentation-3.0",
 )
+
+DEFAULT_HF_CONNECT_TIMEOUT = 5.0
+DEFAULT_HF_READ_TIMEOUT = 30.0
+DEFAULT_HF_WRITE_TIMEOUT = 30.0
+DEFAULT_HF_POOL_TIMEOUT = 10.0
+
+_HF_CLIENT_LOCK = threading.Lock()
+_HF_CLIENT_CONFIGURED = False
+
+
+def configure_hf_http_client(
+    *,
+    connect_timeout: float = DEFAULT_HF_CONNECT_TIMEOUT,
+    read_timeout: float = DEFAULT_HF_READ_TIMEOUT,
+    write_timeout: float = DEFAULT_HF_WRITE_TIMEOUT,
+    pool_timeout: float = DEFAULT_HF_POOL_TIMEOUT,
+    force: bool = False,
+) -> bool:
+    """Register a finite-timeout httpx2 client factory for huggingface_hub."""
+    global _HF_CLIENT_CONFIGURED
+    with _HF_CLIENT_LOCK:
+        if _HF_CLIENT_CONFIGURED and not force:
+            return False
+        try:
+            import httpx2
+            from huggingface_hub import set_client_factory
+            from huggingface_hub.utils._http import hf_request_event_hook
+        except ImportError:
+            return False
+
+        timeout = httpx2.Timeout(
+            connect=connect_timeout,
+            read=read_timeout,
+            write=write_timeout,
+            pool=pool_timeout,
+        )
+
+        def _client_factory() -> httpx2.Client:
+            return httpx2.Client(
+                event_hooks={"request": [hf_request_event_hook]},
+                follow_redirects=True,
+                timeout=timeout,
+            )
+
+        set_client_factory(_client_factory)
+        _HF_CLIENT_CONFIGURED = True
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +89,7 @@ def verify_hf_token(
     if api_client is None:
         from huggingface_hub import HfApi
 
+        configure_hf_http_client()
         kwargs: dict[str, Any] = {"token": cleaned}
         if hf_endpoint:
             kwargs["endpoint"] = hf_endpoint

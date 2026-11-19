@@ -84,6 +84,10 @@ def pull_or_update_model(
     if hf_endpoint:
         os.environ["HF_ENDPOINT"] = hf_endpoint
 
+    from aurisdeck.backends.hf_verify import configure_hf_http_client
+
+    configure_hf_http_client()
+
     if "/" in target:
         from huggingface_hub import snapshot_download
 

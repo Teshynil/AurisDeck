@@ -125,6 +125,9 @@ class PyannoteDiarizerBackend:
             raise MissingCredentialsError()
 
         try:
+            from aurisdeck.backends.hf_verify import configure_hf_http_client
+
+            configure_hf_http_client()
             try:
                 pipeline = Pipeline.from_pretrained(
                     model_id,
